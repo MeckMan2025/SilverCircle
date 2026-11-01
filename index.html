@@ -299,6 +299,9 @@
   .listrow .go{color:var(--muted); font-weight:800; font-size:16px; opacity:0; transform:translateX(-4px); transition:opacity .15s, transform .15s}
   .listrow:hover .go, .listrow:focus-visible .go{opacity:1; transform:none}
   @media (hover:none){ .listrow .go{opacity:1; transform:none} }
+  .listrow.open .go{opacity:1; transform:rotate(90deg)}
+  .subrows{margin:0 0 4px 20px; border-left:2px solid var(--line); padding-left:10px}
+  .subrows .listrow{padding:7px 0}
   .listrow .dot{width:10px; height:10px; border-radius:50%; flex:0 0 auto}
   .listrow .t{font-weight:800; font-size:14px; min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
   .listrow .r{font-size:12px; color:var(--muted); font-weight:700; white-space:nowrap}
@@ -1192,21 +1195,17 @@ function sessionColumn(role){
 }
 
 // The tutor home's "Classes you tutor" box. Subjects first; hovering one shows
-// an arrow, and clicking it turns the box into that subject's classes, with a
-// way back. Opening a class from there goes to the class itself.
+// an arrow, and clicking it opens that subject's classes right under it, in
+// the same box. Clicking a class goes to the class itself.
 function tutorClassBox(myCourses){
   if(!myCourses.length) return `<div class="tiny" style="text-align:center;padding:8px">None yet.</div>`;
   const count = cs => new Set(S.roster.filter(r=>cs.includes(r.course)).map(r=>r.user_id)).size;
   const plural = n => n+' student'+(n===1?'':'s');
-  const d = DEPTS.find(x=>x.name===S.homeDept && x.courses.some(c=>myCourses.includes(c)));
-  if(d){
-    const cs = d.courses.filter(x=>myCourses.includes(x));
-    return `<div class="listrow" onclick="S.homeDept=null; render()" style="color:var(--muted)"><span class="t" style="color:var(--muted)">‹ ${d.emoji} ${esc(d.name)}</span><span class="r">${cs.length} class${cs.length===1?'':'es'}</span></div>`
-      + cs.map(c=>`<div class="listrow" onclick="openClass('${esc(c)}')"><span class="dot" style="background:${courseColor(c)}"></span><span class="t">${esc(c)}</span><span class="r">${plural(count([c]))}</span><span class="go">›</span></div>`).join('');
-  }
   return DEPTS.filter(x=>x.courses.some(c=>myCourses.includes(c))).map(x=>{
-    const cs = x.courses.filter(c=>myCourses.includes(c));
-    return `<div class="listrow" tabindex="0" onclick="S.homeDept='${esc(x.name)}'; render()" onkeydown="if(event.key==='Enter'){S.homeDept='${esc(x.name)}'; render()}"><span class="dot" style="background:${x.color}"></span><span class="t">${x.emoji} ${esc(x.name)}</span><span class="r">${cs.length} class${cs.length===1?'':'es'} · ${plural(count(cs))}</span><span class="go">›</span></div>`;
+    const cs = x.courses.filter(c=>myCourses.includes(c)), open = S.homeDept===x.name;
+    const toggle = `S.homeDept=${open?'null':`'${esc(x.name)}'`}; render()`;
+    return `<div class="listrow ${open?'open':''}" tabindex="0" onclick="${toggle}" onkeydown="if(event.key==='Enter'){${toggle}}"><span class="dot" style="background:${x.color}"></span><span class="t">${x.emoji} ${esc(x.name)}</span><span class="r">${cs.length} class${cs.length===1?'':'es'} · ${plural(count(cs))}</span><span class="go">›</span></div>`
+      + (open ? `<div class="subrows">${cs.map(c=>`<div class="listrow" onclick="openClass('${esc(c)}')"><span class="dot" style="background:${courseColor(c)}"></span><span class="t" style="font-weight:700">${esc(c)}</span><span class="r">${plural(count([c]))}</span></div>`).join('')}</div>` : '');
   }).join('');
 }
 
