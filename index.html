@@ -569,6 +569,8 @@ const hasGrade = () => !!(A.profile && A.profile.role==='student');   // staff a
 // survey, no tutor/tutee switch, and their work sits on the tabs. The board
 // keeps the student experience plus the hub button.
 const isAdmin = () => !!(A.profile && A.profile.role==='admin');
+// Everyone but an administrator has classes: students and board members.
+const hasSchedule = () => !!(A.profile && !isAdmin());
 const roleBadge = r => r==='admin' ? '<span class="rolebadge admin">Administrator</span>' : r==='board' ? '<span class="rolebadge board">Board</span>' : '';
 function renderHead(){
   const title = S.overlay?.type==='course' ? S.overlay.course : TAB_TITLES[S.tab] || 'SilverCircle';
@@ -800,7 +802,7 @@ function renderHelp(c){
 
 /* -------- HOME -------- */
 function scheduleNudgeHtml(){
-  if(!hasGrade() || mySchedule().length || myPlan()) return '';
+  if(!hasSchedule() || mySchedule().length || myPlan()) return '';
   return `<div class="card row" style="margin-bottom:12px;border-color:#f3dcb4;background:#fffaf1">
     <div style="font-size:24px">🔔</div>
     <div style="flex:1"><div style="font-weight:800">Add your class schedule</div><div class="tiny">So nobody books tutoring with you during class.</div></div>
@@ -2201,6 +2203,12 @@ const DEFAULT_BELL = {
   lunches: [['A lunch',660,690],['B lunch',695,725],['C lunch',730,760]],
 };
 const STUDY = 'Study hall';
+// PE meets every other day after 9th grade: Day 1 or Day 2, with another
+// class (often study hall) in that period on the other day.
+const PE1 = 'PE · Day 1', PE2 = 'PE · Day 2';
+const isPE = v => v===PE1 || v===PE2;
+function myGradeLevel(){ return (S.setup && S.setup.grade) || S.me.grade || (A.profile && A.profile.grade_level) || null; }
+const peSplits = () => Number(myGradeLevel())!==9;
 function bell(){ const b=S.settings && S.settings.bell; return b && Array.isArray(b.periods) && b.periods.length ? b : DEFAULT_BELL; }
 const hhmm = m => String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
 const toMin = v => { const [h,m]=(v||'').split(':').map(Number); return isNaN(h)||isNaN(m) ? null : h*60+m; };
@@ -2230,14 +2238,18 @@ function scheduleEditorHtml(d){
   const B=bell(), { mine, rest }=classChoices();
   const opts = v => `<option value="" ${!v?'selected':''}>Pick a class…</option>
       <option value="${STUDY}" ${v===STUDY?'selected':''}>📗 Study hall</option>
+      ${peSplits() ? `<option value="${PE1}" ${v===PE1?'selected':''}>🏃 PE · Day 1</option><option value="${PE2}" ${v===PE2?'selected':''}>🏃 PE · Day 2</option>` : ''}
       ${mine.length ? `<optgroup label="Your classes">${mine.map(x=>`<option ${v===x?'selected':''}>${esc(x)}</option>`).join('')}</optgroup>` : ''}
       ${rest.map(({d,cs})=>`<optgroup label="${d.emoji} ${esc(d.name)}">${cs.map(x=>`<option ${v===x?'selected':''}>${esc(x)}</option>`).join('')}</optgroup>`).join('')}`;
   return `<div class="card">
     <div class="tiny" style="font-size:13px;margin-bottom:10px;line-height:1.5">Pick the class you have each period, or <b>Study hall</b>. Nobody can book tutoring during a class. Study hall and lunch stay open.</div>
-    ${B.periods.map(([n,a,b])=>{ const v=d.periods[n]||''; return `<div class="periodrow ${v===STUDY?'study':''}">
+    ${B.periods.map(([n,a,b])=>{ const v=d.periods[n]||'', o=d.periods[n+'b']||STUDY; return `<div class="periodrow ${v===STUDY?'study':''}">
       <span class="pn">Period ${n}</span><span class="pt">${minLabel(a)} – ${minLabel(b)}</span>
-      <select aria-label="Period ${n}" onchange="S.schedDraft.periods['${n}']=this.value; render()">${opts(v)}</select>
+      <select aria-label="Period ${n}" onchange="S.schedDraft.periods['${n}']=this.value; if(!isPE(this.value)) delete S.schedDraft.periods['${n}b']; render()">${opts(v)}</select>
+      ${isPE(v) ? `<div style="flex-basis:100%;display:flex;align-items:center;gap:6px;padding-left:78px"><span class="tiny" style="font-weight:800">${v===PE1?'Day 2':'Day 1'}:</span>
+        <select aria-label="Period ${n} on the other day" onchange="S.schedDraft.periods['${n}b']=this.value; render()">${opts(o).replace(/<option value="PE[^>]*>[^<]*<\/option>/g,'').replace('<option value="" selected>Pick a class…</option>','').replace('<option value="">Pick a class…</option>','')}</select></div>` : ''}
     </div>`; }).join('')}
+    ${peSplits() ? '<div class="tiny" style="margin-top:6px">Have PE every other day? Pick <b>PE · Day 1</b> or <b>PE · Day 2</b>, then what you have that period on the other day.</div>' : ''}
     <div style="margin-top:14px"><div style="font-weight:800;font-size:14px;margin-bottom:6px">Which lunch do you have?</div>
       <div class="chips">${B.lunches.map(([name,a,b])=>`<button class="chip ${d.lunch===name?'dept':''}" style="${d.lunch===name?'background:var(--blue)':''}" onclick="S.schedDraft.lunch='${esc(name)}'; render()">${esc(name)} <span style="opacity:.75;font-weight:600">· ${minLabel(a)}–${minLabel(b)}</span></button>`).join('')}</div></div>
   </div>`;
@@ -2254,8 +2266,11 @@ function classSpans(d){
   const B=bell(), L=B.lunches.find(x=>x[0]===d.lunch), out=[];
   B.periods.forEach(([n,a,b])=>{
     const c=d.periods[n]; if(!c || c===STUDY) return;
+    // PE alternates days and the app doesn't know which date is Day 1, so a PE
+    // period stays blocked on both days.
     const parts = L && L[1]<b && L[2]>a ? [[a,L[1]],[L[2],b]] : [[a,b]];
-    parts.filter(([x,y])=>y>x).forEach(([x,y])=>out.push({ start:x, end:y, name:'Period '+n+' · '+c }));
+    const nm = isPE(c) ? c+' / '+(c===PE1?'Day 2: ':'Day 1: ')+(d.periods[n+'b']||STUDY) : c;
+    parts.filter(([x,y])=>y>x).forEach(([x,y])=>out.push({ start:x, end:y, name:'Period '+n+' · '+nm }));
   });
   return out;
 }
@@ -2285,7 +2300,7 @@ async function saveScheduleView(btn){
 }
 function scheduleSummaryHtml(){
   const plan=myPlan(), B=bell();
-  if(plan && plan.periods) return B.periods.map(([n,a,b])=>{ const v=plan.periods[n]||'—';
+  if(plan && plan.periods) return B.periods.map(([n,a,b])=>{ const v=isPE(plan.periods[n]) ? plan.periods[n]+' · '+(plan.periods[n]===PE1?'Day 2: ':'Day 1: ')+(plan.periods[n+'b']||STUDY) : (plan.periods[n]||'—');
       return `<div class="row" style="margin-bottom:6px"><span class="tiny" style="width:66px;font-weight:800">Period ${n}</span><span style="font-weight:700;font-size:14px;${v===STUDY?'color:#2e9b6a':''}">${esc(v)}</span><span class="tiny" style="margin-left:auto">${minLabel(a)} – ${minLabel(b)}</span></div>`; }).join('')
     + (plan.lunch ? `<div class="row" style="margin-bottom:6px"><span class="tiny" style="width:66px;font-weight:800">Lunch</span><span style="font-weight:700;font-size:14px;color:#2e9b6a">${esc(plan.lunch)}</span></div>` : '');
   const p=mySchedule();
@@ -2925,7 +2940,7 @@ function renderProfile(c){
       <div class="tiny" style="margin-top:8px">An administrator checks each grade against school records. Only classes here can be tutored.</div>
     </div>`}
 
-    ${hasGrade() ? `<div class="sectlabel">Class schedule <button class="btn ghost sm" style="margin-left:8px;padding:4px 10px" onclick="S.schedDraft=null; openView({type:'classSchedule'})">Edit</button></div>
+    ${hasSchedule() ? `<div class="sectlabel">Class schedule <button class="btn ghost sm" style="margin-left:8px;padding:4px 10px" onclick="S.schedDraft=null; openView({type:'classSchedule'})">Edit</button></div>
     <div class="card">${scheduleSummaryHtml()}<div class="tiny" style="margin-top:8px">Nobody can book tutoring with you during these. Study hall and lunch stay open.</div></div>` : ''}
 
     <div class="sectlabel">Account</div>
@@ -2980,7 +2995,7 @@ function renderSetup(c){
           <select onchange="S.setup.taken['${esc(course)}'].grade=this.value">${LETTERS.map(g=>`<option ${st.taken[course].grade===g?'selected':''}>${g}</option>`).join('')}</select>
           <select onchange="S.setup.taken['${esc(course)}'].year=this.value">${TAKEN_GRADES.map(y=>`<option ${st.taken[course].year===y?'selected':''}>${y}</option>`).join('')}</select>
         </div>`).join('')}</div>` : ''}
-      ${nav(2, picked.length ? 'Next · '+picked.length+' taken' : 'Next · none yet', 'S.setup.step='+(hasGrade()?4:5)+';render()', false)}`;
+      ${nav(2, picked.length ? 'Next · '+picked.length+' taken' : 'Next · none yet', 'S.setup.step='+(hasSchedule()?4:5)+';render()', false)}`;
   } else if(step===4){
     S.schedDraft = S.schedDraft || scheduleDraft();
     body = `<h2>What's your class schedule?</h2>
@@ -2997,7 +3012,7 @@ function renderSetup(c){
       ${opt('tutor','🎓','Help others','Tutor the classes you have taken and earn service hours.', !taken.length)}
       ${opt('both','🤝','Both','Get help in some classes, tutor in others.', !taken.length)}
       ${!taken.length ? `<div class="tiny" style="margin:4px 2px 0">Tutoring needs at least one class you have taken — go back a step to add some.</div>` : ''}
-      ${wantsTutor && taken.length ? nav(hasGrade()?4:3, 'Next', 'S.setup.step=6;render()', false) : nav(hasGrade()?4:3, 'Finish', 'finishSetup(this)', false)}`;
+      ${wantsTutor && taken.length ? nav(hasSchedule()?4:3, 'Next', 'S.setup.step=6;render()', false) : nav(hasSchedule()?4:3, 'Finish', 'finishSetup(this)', false)}`;
   } else if(step===6){
     const taken=Object.keys(st.taken);
     body = `<h2>Which of these will you tutor?</h2>
@@ -3056,7 +3071,7 @@ async function finishSetup(btn){
     await sbFetch('/rest/v1/sl_student_classes?user_id=eq.'+me, { method:'DELETE', headers:{ Prefer:'return=minimal' } });
     if(st.taking.length) await sbFetch('/rest/v1/sl_student_classes', { method:'POST', headers:{ Prefer:'return=minimal' }, body:JSON.stringify(st.taking.map(course=>({ user_id:me, course }))) });
     await syncTakenClaims(st.taken);
-    if(hasGrade() && st.sched) await saveSchedule(st.sched);
+    if(hasSchedule() && st.sched) await saveSchedule(st.sched);
     S.schedDraft=null;
     // Tutoring.
     if(wantsTutor){
