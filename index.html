@@ -71,6 +71,8 @@
   .head h1{font-size:17px; margin:0; font-weight:800}
   .head .right{margin-left:auto; font-size:12px; color:var(--muted); font-weight:700; text-align:right}
   .bell{position:relative; border:none; background:#fff; border-radius:10px; width:38px; height:38px; font-size:18px; cursor:pointer; box-shadow:0 2px 8px rgba(60,50,110,.12); flex:0 0 auto}
+  .issuebtn{color:#c23b5e; font-weight:900; font-size:19px; margin-left:6px}
+  .issues textarea{width:100%; box-sizing:border-box; padding:9px 10px; border:1.5px solid #e5e2f0; border-radius:10px; font:inherit; font-size:14px; resize:vertical}
   .bell .n{position:absolute; top:-5px; right:-5px; min-width:18px; height:18px; padding:0 5px; border-radius:9px; background:var(--pink-d); color:#fff; font-size:11px; font-weight:800; display:flex; align-items:center; justify-content:center}
   .nscrim{position:fixed; inset:0; z-index:29}
   .notifs{position:absolute; right:12px; top:58px; width:min(380px, calc(100vw - 24px)); background:#fff; border:1px solid var(--line); border-radius:16px; box-shadow:0 12px 36px rgba(60,50,110,.18); z-index:30; max-height:70vh; overflow:auto}
@@ -575,11 +577,52 @@ const hasSchedule = () => !!(A.profile && !isAdmin());
 const roleBadge = r => r==='admin' ? '<span class="rolebadge admin">Administrator</span>' : r==='board' ? '<span class="rolebadge board">Board</span>' : '';
 function renderHead(){
   const title = S.overlay?.type==='course' ? S.overlay.course : TAB_TITLES[S.tab] || 'SilverCircle';
+  // A redraw while someone is typing an issue keeps what they typed.
+  const draft = $('issue_in') ? $('issue_in').value : null, typing = document.activeElement && document.activeElement.id==='issue_in';
+  setTimeout(()=>{ const t=$('issue_in'); if(t && draft!==null){ t.value=draft; if(typing) t.focus(); } }, 0);
   $('head').innerHTML = `
     <button class="menu" onclick="toggleSide(true)" aria-label="Open navigation">☰</button>
     <h1>${esc(title)}</h1>
     <div class="right">${esc(currentAlias())} ${roleBadge(A.profile.role)}<br><span class="seen on">● Online</span>${hasGrade() ? ' · Grade '+S.me.grade : ''}</div>
-    ${bellHtml()}`;
+    ${bellHtml()}${issueBtnHtml()}`;
+}
+// The ! in the top right, on every screen. Anyone can tell the board and
+// administrators something is broken; staff see the open ones here and mark
+// them fixed. Stored in sl_reports with no post or message attached.
+const isIssue = r => !r.post_id && !r.message_id;
+function openIssues(){ return isStaff() ? (S.reports||[]).filter(r=>r.status==='open' && isIssue(r)) : []; }
+function issueBtnHtml(){
+  const open=openIssues();
+  return `<button class="bell issuebtn" onclick="toggleIssues()" aria-label="Report an issue" title="Report an issue">!${open.length?`<span class="n">${open.length>9?'9+':open.length}</span>`:''}</button>
+    ${S.issueOpen ? `<div class="nscrim" onclick="toggleIssues(false)"></div><div class="notifs issues">
+      <div class="nh">Report an issue</div>
+      <div style="padding:10px 14px">
+        <textarea id="issue_in" rows="3" maxlength="1000" placeholder="What went wrong? What were you trying to do?"></textarea>
+        <div class="row" style="gap:8px;margin-top:8px"><span class="tiny" style="flex:1">The board and administrators see this. We include the page you're on.</span><button class="btn sm" id="issue_send" onclick="sendIssue()">Send</button></div>
+      </div>
+      ${isStaff() ? `<div class="nh" style="border-top:1px solid var(--line)">Open issues ${open.length?`<span class="count">${open.length}</span>`:''}</div>
+        ${open.length ? open.map(r=>`<div class="nrow" style="cursor:default;align-items:flex-start"><span class="ic">❗</span><div style="min-width:0;flex:1">
+            <div class="t" style="white-space:normal">${esc(r.reason||'(no details)')}</div>
+            <div class="s">${esc(r.snapshot||'')}${r.created_at?' · '+agoLabel(r.created_at):''}</div></div>
+            <button class="btn sm ghost" style="flex:0 0 auto" onclick="resolveIssue('${r.id}')">Fixed</button></div>`).join('')
+          : '<div class="tiny" style="padding:14px;text-align:center">No open issues.</div>'}` : ''}
+    </div>` : ''}`;
+}
+function toggleIssues(open){ S.issueOpen = open===undefined ? !S.issueOpen : open; S.notifOpen=false; renderHead(); if(S.issueOpen){ const t=$('issue_in'); if(t) t.focus(); } }
+function sendIssue(){
+  const t=$('issue_in'), text=(t&&t.value||'').trim(); if(!text){ toast('Say what went wrong first.'); return; }
+  const page=(S.overlay ? (S.overlay.type==='course' ? S.overlay.course : S.overlay.type) : (TAB_TITLES[S.tab]||S.tab||'Home'));
+  const device=/iPhone|iPad/.test(navigator.userAgent)?'iPhone/iPad':/Android/.test(navigator.userAgent)?'Android':/Mac/.test(navigator.userAgent)?'Mac':/Windows/.test(navigator.userAgent)?'Windows':/CrOS/.test(navigator.userAgent)?'Chromebook':'Other device';
+  const btn=$('issue_send'); if(btn){ btn.disabled=true; btn.textContent='Sending…'; }
+  sbFetch('/rest/v1/sl_reports', { method:'POST', headers:{ Prefer:'return=minimal' }, body:JSON.stringify({ reporter_id:A.user.id, reason:text, snapshot:('From '+currentAlias()+' · on '+page+' · '+device).slice(0,500) }) })
+    .then(()=>{ S.issueOpen=false; toast('Sent — thanks! The board will take a look.'); return isStaff() ? loadData() : null; })
+    .then(()=>render())
+    .catch(e=>{ toast(e.message); if(btn){ btn.disabled=false; btn.textContent='Send'; } });
+}
+function resolveIssue(id){
+  S.reports=(S.reports||[]).filter(r=>r.id!==id); renderHead();
+  sbFetch('/rest/v1/sl_reports?id=eq.'+id, { method:'PATCH', headers:{ Prefer:'return=minimal' }, body:JSON.stringify({ status:'resolved' }) })
+    .then(()=>toast('Marked fixed')).catch(e=>{ toast(e.message); loadData().then(render); });
 }
 
 // ---- Notifications: what changed for you, built from what is already loaded ----
@@ -626,7 +669,7 @@ function notifItems(){
     if(g.status==='rejected') out.push({ key:'grade:'+g.id+':rejected', at:g.reviewed_at||g.created_at||'', ic:'⚠️', t:g.course+' grade wasn\'t verified', s:'Check it on your profile', go:()=>go('profile') });
   });
   // Staff: people waiting on a grade check
-  if(isStaff()) (S.reports||[]).filter(r=>r.status==='open').forEach(r=>out.push({ key:'report:'+r.id, at:r.created_at, ic:'🚩', t:'A message was reported', s:(r.snapshot||'').slice(0,80), go:()=>go('home') }));
+  if(isStaff()) (S.reports||[]).filter(r=>r.status==='open' && !isIssue(r)).forEach(r=>out.push({ key:'report:'+r.id, at:r.created_at, ic:'🚩', t:'A message was reported', s:(r.snapshot||'').slice(0,80), go:()=>go('home') }));
   if(isStaff() && S.pendingGrades) out.push({ key:'admin:pending:'+S.pendingGrades, at:new Date().toISOString(), ic:'✅', t:S.pendingGrades+' '+(S.pendingGrades===1?'person':'people')+' waiting on a grade check', s:'Tap to review', go:()=>go('admin-grades') });
   const seen=notifSeen();
   out.forEach(n=>{ n.unread=!seen[n.key]; });
@@ -643,7 +686,7 @@ function bellHtml(){
         : '<div class="tiny" style="padding:18px;text-align:center">Nothing yet. Requests, replies and messages show up here.</div>'}
     </div>` : ''}`;
 }
-function toggleNotifs(open){ S.notifOpen = open===undefined ? !S.notifOpen : open; renderHead(); }
+function toggleNotifs(open){ S.notifOpen = open===undefined ? !S.notifOpen : open; S.issueOpen=false; renderHead(); }
 function notifOpen(i){ const n=notifItems()[i]; if(!n) return; const seen=notifSeen(); seen[n.key]=Date.now(); try { localStorage.setItem(NOTIF_LS, JSON.stringify(seen)); } catch {} S.notifOpen=false; n.go(); }
 
 function incomingCount(){
@@ -2877,7 +2920,7 @@ function resolveReport(id, removePostId){
     .then(loadData).then(()=>{ render(); toast(removePostId ? 'Message removed' : 'Dismissed'); }).catch(e=>toast(e.message));
 }
 function reportsHtml(){
-  const open=(S.reports||[]).filter(r=>r.status==='open'); if(!open.length) return '';
+  const open=(S.reports||[]).filter(r=>r.status==='open' && !isIssue(r)); if(!open.length) return '';
   return `<div class="sectlabel">Reported messages · ${open.length}</div>${open.map(r=>`<div class="card">
     <div class="tiny">${esc(new Date(r.created_at).toLocaleString())}${r.reason?' · “'+esc(r.reason)+'”':''}</div>
     <div style="font-size:13px;margin:6px 0">${esc(r.snapshot||'(message)')}</div>
