@@ -2207,6 +2207,7 @@ const STUDY = 'Study hall';
 // PE meets every other day after 9th grade: Day 1 or Day 2, with another
 // class (often study hall) in that period on the other day.
 const PE1 = 'PE · Day 1', PE2 = 'PE · Day 2';
+const PE_DAILY = 'Physical Education';   // every day, any grade
 const isPE = v => v===PE1 || v===PE2;
 function myGradeLevel(){ return (S.setup && S.setup.grade) || S.me.grade || (A.profile && A.profile.grade_level) || null; }
 const peSplits = () => Number(myGradeLevel())!==9;
@@ -2239,6 +2240,7 @@ function scheduleEditorHtml(d){
   const B=bell(), { mine, rest }=classChoices();
   const opts = v => `<option value="" ${!v?'selected':''}>Pick a class…</option>
       <option value="${STUDY}" ${v===STUDY?'selected':''}>📗 Study hall</option>
+      <option value="${PE_DAILY}" ${v===PE_DAILY?'selected':''}>🏃 Physical Education</option>
       ${peSplits() ? `<option value="${PE1}" ${v===PE1?'selected':''}>🏃 PE · Day 1</option><option value="${PE2}" ${v===PE2?'selected':''}>🏃 PE · Day 2</option>` : ''}
       ${mine.length ? `<optgroup label="Your classes">${mine.map(x=>`<option ${v===x?'selected':''}>${esc(x)}</option>`).join('')}</optgroup>` : ''}
       ${rest.map(({d,cs})=>`<optgroup label="${d.emoji} ${esc(d.name)}">${cs.map(x=>`<option ${v===x?'selected':''}>${esc(x)}</option>`).join('')}</optgroup>`).join('')}`;
@@ -2248,7 +2250,7 @@ function scheduleEditorHtml(d){
       <span class="pn">Period ${n}</span><span class="pt">${minLabel(a)} – ${minLabel(b)}</span>
       <select aria-label="Period ${n}" onchange="S.schedDraft.periods['${n}']=this.value; if(!isPE(this.value)) delete S.schedDraft.periods['${n}b']; render()">${opts(v)}</select>
       ${isPE(v) ? `<div style="flex-basis:100%;display:flex;align-items:center;gap:6px;padding-left:78px"><span class="tiny" style="font-weight:800">${v===PE1?'Day 2':'Day 1'}:</span>
-        <select aria-label="Period ${n} on the other day" onchange="S.schedDraft.periods['${n}b']=this.value; render()">${opts(o).replace(/<option value="PE[^>]*>[^<]*<\/option>/g,'').replace('<option value="" selected>Pick a class…</option>','').replace('<option value="">Pick a class…</option>','')}</select></div>` : ''}
+        <select aria-label="Period ${n} on the other day" onchange="S.schedDraft.periods['${n}b']=this.value; render()">${opts(o).replace(/<option value="PE[^>]*>[^<]*<\/option>/g,'').replace(/<option value="Physical Education"[^>]*>[^<]*<\/option>/,'').replace('<option value="" selected>Pick a class…</option>','').replace('<option value="">Pick a class…</option>','')}</select></div>` : ''}
     </div>`; }).join('')}
     ${peSplits() ? '<div class="tiny" style="margin-top:6px">Have PE every other day? Pick <b>PE · Day 1</b> or <b>PE · Day 2</b>, then what you have that period on the other day.</div>' : ''}
     <div style="margin-top:14px"><div style="font-weight:800;font-size:14px;margin-bottom:6px">Which lunch do you have?</div>
