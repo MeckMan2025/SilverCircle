@@ -120,6 +120,10 @@
   .freesq.none .t{color:var(--muted)}
   .freesq.today{box-shadow:0 0 0 2px #dbe5fb}
   .periodrow{display:flex; align-items:center; gap:6px; padding:6px 0; border-bottom:1px solid var(--line); flex-wrap:wrap}
+  .periodrow select{flex:1; min-width:160px; padding:8px 9px; border:1.5px solid #e5e2f0; border-radius:9px; font:inherit; font-size:14px; color:var(--ink); background:#fff}
+  .periodrow .pn{font-weight:800; font-size:14px; width:72px; flex:0 0 auto}
+  .periodrow .pt{font-size:11.5px; color:var(--muted); font-weight:700; width:120px; flex:0 0 auto}
+  .periodrow.study select{background:#eefaf3; border-color:#bfe6cf}
   .periodrow input{padding:8px 9px; border:1.5px solid #e5e2f0; border-radius:9px; font:inherit; font-size:14px; color:var(--ink); background:#fff}
   .periodrow input:first-child{flex:1; min-width:110px; font-weight:700}
   .periodrow .del{border:none; background:none; color:var(--muted); cursor:pointer; font-size:16px; margin-left:auto}
@@ -796,7 +800,7 @@ function renderHelp(c){
 
 /* -------- HOME -------- */
 function scheduleNudgeHtml(){
-  if(!hasGrade() || mySchedule().length) return '';
+  if(!hasGrade() || mySchedule().length || myPlan()) return '';
   return `<div class="card row" style="margin-bottom:12px;border-color:#f3dcb4;background:#fffaf1">
     <div style="font-size:24px">🔔</div>
     <div style="flex:1"><div style="font-weight:800">Add your class schedule</div><div class="tiny">So nobody books tutoring with you during class.</div></div>
@@ -2096,18 +2100,22 @@ const DAY_NAMES=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Sa
 // the class schedule, not the calendar, so blocksOn leaves them out.
 const CLASS_NOTE = 'Class · ';
 const isClassBlock = b => b.kind==='unavailable' && (b.note||'').startsWith(CLASS_NOTE);
+// One hidden row per person remembers the picks themselves (which class each
+// period, study halls, which lunch) so the editor can show them again.
+const PLAN_NOTE = CLASS_NOTE+'@plan ';
+const isPlanBlock = b => (b.note||'').startsWith(PLAN_NOTE);
 function blocksOn(userId, dateKey){
   const wd=parseYmd(dateKey).getDay();
   return (S.availability||[]).filter(b => b.user_id===userId && !isClassBlock(b) && (b.recurring ? b.weekday===wd : b.date===dateKey));
 }
 function classesOn(userId, dateKey){
   const wd=parseYmd(dateKey).getDay();
-  return (S.availability||[]).filter(b => b.user_id===userId && isClassBlock(b) && b.recurring && b.weekday===wd);
+  return (S.availability||[]).filter(b => b.user_id===userId && isClassBlock(b) && !isPlanBlock(b) && b.recurring && b.weekday===wd);
 }
 // My class periods, one per period (they repeat Monday to Friday).
 function mySchedule(){
   const seen={}, out=[];
-  (S.availability||[]).filter(b=>A.user && b.user_id===A.user.id && isClassBlock(b)).forEach(b=>{
+  (S.availability||[]).filter(b=>A.user && b.user_id===A.user.id && isClassBlock(b) && !isPlanBlock(b)).forEach(b=>{
     const key=b.start_min+'-'+b.end_min; if(seen[key]) return; seen[key]=1;
     out.push({ name:b.note.slice(CLASS_NOTE.length), start:b.start_min, end:b.end_min });
   });
@@ -2184,48 +2192,81 @@ async function submitRequest(tid){
 }
 
 /* -------- CLASS SCHEDULE -------- */
-// Nobody can book tutoring during your classes. Study hall and lunch are
-// left off the list, so those stay open.
-const DEFAULT_PERIODS = [['Period 1','08:00','08:50'],['Period 2','08:55','09:45'],['Period 3','09:50','10:40'],['Period 4','10:45','11:35'],['Period 5','12:10','13:00'],['Period 6','13:05','13:55'],['Period 7','14:00','14:50']];
+// Nobody can book tutoring during your classes. Students pick a class (or
+// Study hall) for each period and say which lunch they have; the times come
+// from the school's bell schedule, which an administrator sets under Session
+// times. Study hall and lunch stay open for tutoring.
+const DEFAULT_BELL = {
+  periods: [[1,480,530],[2,535,585],[3,590,640],[4,645,695],[5,730,780],[6,785,835],[7,840,890]],
+  lunches: [['A lunch',660,690],['B lunch',695,725],['C lunch',730,760]],
+};
+const STUDY = 'Study hall';
+function bell(){ const b=S.settings && S.settings.bell; return b && Array.isArray(b.periods) && b.periods.length ? b : DEFAULT_BELL; }
 const hhmm = m => String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
 const toMin = v => { const [h,m]=(v||'').split(':').map(Number); return isNaN(h)||isNaN(m) ? null : h*60+m; };
+function myPlan(){
+  const b=(S.availability||[]).find(x=>A.user && x.user_id===A.user.id && isPlanBlock(x));
+  if(!b) return null;
+  try { return JSON.parse(b.note.slice(PLAN_NOTE.length)); } catch(e){ return null; }
+}
+// The draft is { periods:{ '1':'Algebra 2', '2':'Study hall', … }, lunch:'B lunch' }.
+// Someone with an older, typed schedule gets each period matched by time, and
+// the class kept when the name they typed is a real class.
 function scheduleDraft(){
-  const have=mySchedule();
-  return have.length ? have.map(p=>({ name:p.name, start:hhmm(p.start), end:hhmm(p.end) }))
-                     : DEFAULT_PERIODS.map(([name,start,end])=>({ name, start, end }));
+  const plan=myPlan();
+  if(plan && plan.periods) return { periods:{ ...plan.periods }, lunch:plan.lunch||'' };
+  const out={ periods:{}, lunch:'' }, old=mySchedule();
+  bell().periods.forEach(([n,a,b])=>{
+    const hit=old.find(o=>o.start<b && o.end>a);
+    out.periods[n] = hit ? (ALL_COURSES.includes(hit.name) ? hit.name : '') : (old.length ? STUDY : '');
+  });
+  return out;
+}
+function classChoices(){
+  const mine=(S.setup && S.setup.taking && S.setup.taking.length ? S.setup.taking : (S.myClasses||[])).filter(x=>ALL_COURSES.includes(x));
+  return { mine, rest: DEPTS.map(d=>({ d, cs:d.courses.filter(x=>!mine.includes(x)) })).filter(x=>x.cs.length) };
 }
 function scheduleEditorHtml(d){
+  const B=bell(), { mine, rest }=classChoices();
+  const opts = v => `<option value="" ${!v?'selected':''}>Pick a class…</option>
+      <option value="${STUDY}" ${v===STUDY?'selected':''}>📗 Study hall</option>
+      ${mine.length ? `<optgroup label="Your classes">${mine.map(x=>`<option ${v===x?'selected':''}>${esc(x)}</option>`).join('')}</optgroup>` : ''}
+      ${rest.map(({d,cs})=>`<optgroup label="${d.emoji} ${esc(d.name)}">${cs.map(x=>`<option ${v===x?'selected':''}>${esc(x)}</option>`).join('')}</optgroup>`).join('')}`;
   return `<div class="card">
-    <div class="tiny" style="font-size:13px;margin-bottom:10px;line-height:1.5">Add the periods you're <b>in class</b>, Monday to Friday. Nobody can book tutoring with you then.
-      <b>Delete your study hall and lunch</b> (✕), since those stay open for tutoring.</div>
-    ${d.map((p,i)=>`<div class="periodrow">
-      <input value="${esc(p.name)}" aria-label="Period name" oninput="S.schedDraft[${i}].name=this.value">
-      <input type="time" step="300" value="${p.start}" aria-label="Starts" onchange="S.schedDraft[${i}].start=this.value">
-      <span class="tiny">to</span>
-      <input type="time" step="300" value="${p.end}" aria-label="Ends" onchange="S.schedDraft[${i}].end=this.value">
-      <button class="del" title="Remove (study hall, lunch)" onclick="S.schedDraft.splice(${i},1); render()">✕</button>
-    </div>`).join('') || '<div class="tiny" style="text-align:center;padding:8px">No class periods. You can be booked any time.</div>'}
-    <button class="btn ghost sm" style="width:100%;margin-top:8px" onclick="addPeriod()">＋ Add a class period</button>
+    <div class="tiny" style="font-size:13px;margin-bottom:10px;line-height:1.5">Pick the class you have each period, or <b>Study hall</b>. Nobody can book tutoring during a class. Study hall and lunch stay open.</div>
+    ${B.periods.map(([n,a,b])=>{ const v=d.periods[n]||''; return `<div class="periodrow ${v===STUDY?'study':''}">
+      <span class="pn">Period ${n}</span><span class="pt">${minLabel(a)} – ${minLabel(b)}</span>
+      <select aria-label="Period ${n}" onchange="S.schedDraft.periods['${n}']=this.value; render()">${opts(v)}</select>
+    </div>`; }).join('')}
+    <div style="margin-top:14px"><div style="font-weight:800;font-size:14px;margin-bottom:6px">Which lunch do you have?</div>
+      <div class="chips">${B.lunches.map(([name,a,b])=>`<button class="chip ${d.lunch===name?'dept':''}" style="${d.lunch===name?'background:var(--blue)':''}" onclick="S.schedDraft.lunch='${esc(name)}'; render()">${esc(name)} <span style="opacity:.75;font-weight:600">· ${minLabel(a)}–${minLabel(b)}</span></button>`).join('')}</div></div>
   </div>`;
 }
-function addPeriod(){
-  const d=S.schedDraft, last=d[d.length-1], start=last ? toMin(last.end)+5 : 8*60;
-  d.push({ name:'Period '+(d.length+1), start:hhmm(start), end:hhmm(Math.min(start+50, 23*60)) }); render();
-}
 function scheduleProblem(d){
-  for(const p of d){
-    const a=toMin(p.start), b=toMin(p.end);
-    if(!p.name.trim()) return 'Every period needs a name.';
-    if(a===null || b===null || b<=a) return (p.name||'A period')+' needs to end after it starts.';
-  }
+  const miss=bell().periods.find(([n])=>!d.periods[n]);
+  if(miss) return 'Pick a class or Study hall for Period '+miss[0]+'.';
+  if(!d.lunch) return 'Pick which lunch you have.';
   return '';
+}
+// Class periods minus the lunch window, so lunch stays bookable even when it
+// falls inside a period.
+function classSpans(d){
+  const B=bell(), L=B.lunches.find(x=>x[0]===d.lunch), out=[];
+  B.periods.forEach(([n,a,b])=>{
+    const c=d.periods[n]; if(!c || c===STUDY) return;
+    const parts = L && L[1]<b && L[2]>a ? [[a,L[1]],[L[2],b]] : [[a,b]];
+    parts.filter(([x,y])=>y>x).forEach(([x,y])=>out.push({ start:x, end:y, name:'Period '+n+' · '+c }));
+  });
+  return out;
 }
 async function saveSchedule(d){
   const me=A.user.id;
   await sbFetch('/rest/v1/sl_availability?user_id=eq.'+me+'&kind=eq.unavailable&note=like.'+encodeURIComponent(CLASS_NOTE+'*'), { method:'DELETE', headers:{ Prefer:'return=minimal' } });
   const rows=[];
-  d.forEach(p=>{ for(let wd=1; wd<=5; wd++) rows.push({ user_id:me, kind:'unavailable', recurring:true, weekday:wd, start_min:toMin(p.start), end_min:toMin(p.end), note:CLASS_NOTE+p.name.trim() }); });
-  if(rows.length) await sbFetch('/rest/v1/sl_availability', { method:'POST', headers:{ Prefer:'return=minimal' }, body:JSON.stringify(rows) });
+  classSpans(d).forEach(p=>{ for(let wd=1; wd<=5; wd++) rows.push({ user_id:me, kind:'unavailable', recurring:true, weekday:wd, start_min:p.start, end_min:p.end, note:CLASS_NOTE+p.name }); });
+  // The picks themselves: Sunday 12:00–12:01 AM, never a tutoring time.
+  rows.push({ user_id:me, kind:'unavailable', recurring:true, weekday:0, start_min:0, end_min:1, note:PLAN_NOTE+JSON.stringify({ periods:d.periods, lunch:d.lunch }) });
+  await sbFetch('/rest/v1/sl_availability', { method:'POST', headers:{ Prefer:'return=minimal' }, body:JSON.stringify(rows) });
 }
 function renderClassSchedule(c){
   S.schedDraft = S.schedDraft || scheduleDraft();
@@ -2243,6 +2284,10 @@ async function saveScheduleView(btn){
   catch(e){ toast(e.message); btn.disabled=false; btn.textContent='Save schedule'; }
 }
 function scheduleSummaryHtml(){
+  const plan=myPlan(), B=bell();
+  if(plan && plan.periods) return B.periods.map(([n,a,b])=>{ const v=plan.periods[n]||'—';
+      return `<div class="row" style="margin-bottom:6px"><span class="tiny" style="width:66px;font-weight:800">Period ${n}</span><span style="font-weight:700;font-size:14px;${v===STUDY?'color:#2e9b6a':''}">${esc(v)}</span><span class="tiny" style="margin-left:auto">${minLabel(a)} – ${minLabel(b)}</span></div>`; }).join('')
+    + (plan.lunch ? `<div class="row" style="margin-bottom:6px"><span class="tiny" style="width:66px;font-weight:800">Lunch</span><span style="font-weight:700;font-size:14px;color:#2e9b6a">${esc(plan.lunch)}</span></div>` : '');
   const p=mySchedule();
   return p.length ? p.map(x=>`<div class="row" style="margin-bottom:6px"><span style="font-weight:700;font-size:14px">${esc(x.name)}</span><span class="tiny" style="margin-left:auto">${minLabel(x.start)} – ${minLabel(x.end)}</span></div>`).join('')
     : `<div class="tiny">Not added yet. Add it so nobody books tutoring during your classes.</div>`;
@@ -2939,7 +2984,7 @@ function renderSetup(c){
   } else if(step===4){
     S.schedDraft = S.schedDraft || scheduleDraft();
     body = `<h2>What's your class schedule?</h2>
-      <div class="lead">Tutoring can't be booked during class, only before or after school, at lunch, or in study hall.</div>
+      <div class="lead">Pick your class for each period, mark your study hall if you have one, and say which lunch you have. Tutoring can't be booked during class.</div>
       <div style="text-align:left">${scheduleEditorHtml(S.schedDraft)}</div>
       ${nav(3, 'Next', 'setupScheduleNext()', false)}`;
   } else if(step===5){
@@ -2990,7 +3035,7 @@ async function syncTakenClaims(taken){
 }
 function setupScheduleNext(){
   const bad=scheduleProblem(S.schedDraft); if(bad){ A.setupMsg=bad; return render(); }
-  A.setupMsg=''; S.setup.sched=S.schedDraft.map(p=>({...p})); S.setup.step=5; render();
+  A.setupMsg=''; S.setup.sched={ periods:{ ...S.schedDraft.periods }, lunch:S.schedDraft.lunch }; S.setup.step=5; render();
 }
 function setupToggleTaking(course){ const a=S.setup.taking, i=a.indexOf(course); if(i<0) a.push(course); else a.splice(i,1); render(); }
 function setupToggleTaken(course){ const t=S.setup.taken; if(t[course]){ delete t[course]; S.setup.tutorPick=S.setup.tutorPick.filter(x=>x!==course); } else t[course]={ grade:'A', year:defaultTaken() }; render(); }
@@ -3377,7 +3422,7 @@ function renderAdminTimes(c){
   if(!isStaff()) return go('home');
   const cur = S.settings && S.settings.sessions && S.settings.sessions.slots ? S.settings.sessions : DEFAULT_SESSIONS;
   const cq = quietHours();
-  const d = S.timesDraft = S.timesDraft || { slots: cur.slots.map(x=>x.slice()), schoolPlaces:(cur.schoolPlaces||[]).filter(x=>x!=='Other').join(', '), offCampusPlaces:(cur.offCampusPlaces||[]).filter(x=>x!=='Other').join(', '), quiet:{ start:cq.start, end:cq.end, days:cq.days.slice() } };
+  const d = S.timesDraft = S.timesDraft || { slots: cur.slots.map(x=>x.slice()), schoolPlaces:(cur.schoolPlaces||[]).filter(x=>x!=='Other').join(', '), offCampusPlaces:(cur.offCampusPlaces||[]).filter(x=>x!=='Other').join(', '), quiet:{ start:cq.start, end:cq.end, days:cq.days.slice() }, bell:{ periods:bell().periods.map(x=>x.slice()), lunches:bell().lunches.map(x=>x.slice()) } };
   const inp='padding:9px 10px;border:1.5px solid #e5e2f0;border-radius:10px;font:inherit;font-size:14px;background:#fff';
   const t2v = m => (Math.floor(m/60)+'').padStart(2,'0')+':'+(m%60+'').padStart(2,'0');
   const row = (sl,i) => `<div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px">
@@ -3388,7 +3433,7 @@ function renderAdminTimes(c){
       <span class="tiny" style="flex:0 0 60px">${sl[2]>sl[1] ? (sl[2]-sl[1])+' min' : '<b style="color:#c23b5e">ends first</b>'}</span>
       <button class="mini danger" onclick="S.timesDraft.slots.splice(${i},1);render()">Remove</button>
     </div>`;
-  const bad = d.slots.some(sl=>sl[2]<=sl[1]) || d.slots.some(sl=>IN_SCHOOL_GROUPS.includes(sl[0]) && sl[2]-sl[1]>MAX_SCHOOL_MINUTES);
+  const bad = d.bell.periods.some(x=>x[2]<=x[1]) || d.bell.lunches.some(x=>x[2]<=x[1] || !String(x[0]).trim()) || d.slots.some(sl=>sl[2]<=sl[1]) || d.slots.some(sl=>IN_SCHOOL_GROUPS.includes(sl[0]) && sl[2]-sl[1]>MAX_SCHOOL_MINUTES);
   c.innerHTML = `
     <button class="back" onclick="go(isAdmin()?'home':'admin')">‹ ${isAdmin() ? 'Home' : A.profile.role==='board' ? 'Board' : 'Administration'}</button>
     <h2 class="title">Session times</h2>
@@ -3398,6 +3443,25 @@ function renderAdminTimes(c){
       ${d.slots.map((sl,i)=>sl[0]===g?row(sl,i):'').join('') || '<div class="tiny" style="margin-bottom:8px">No times yet.</div>'}
       <div style="margin-bottom:8px"><button class="btn ghost sm" onclick="S.timesDraft.slots.push(['${g}',${g==='Before school'?'450,480':g==='8th period'?'885,930':'930,990'}]);render()">＋ Add a time</button></div>
     </div>`).join('')}
+    <div class="sectlabel">Bell schedule · class periods</div>
+    <div class="card" style="padding:12px 14px 4px">
+      ${d.bell.periods.map((pr,i)=>`<div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px"><span style="font-weight:800;width:72px">Period ${pr[0]}</span>
+        <input type="time" value="${t2v(pr[1])}" step="300" style="flex:0 0 118px;${inp}" onchange="S.timesDraft.bell.periods[${i}][1]=timeToMin(this.value);render()"><span class="tiny">to</span>
+        <input type="time" value="${t2v(pr[2])}" step="300" style="flex:0 0 118px;${inp}" onchange="S.timesDraft.bell.periods[${i}][2]=timeToMin(this.value);render()">
+        ${i===d.bell.periods.length-1 ? `<button class="mini danger" onclick="S.timesDraft.bell.periods.pop();render()">Remove</button>` : ''}</div>`).join('')}
+      <div style="margin-bottom:8px"><button class="btn ghost sm" onclick="const p=S.timesDraft.bell.periods, l=p[p.length-1]; p.push([l?l[0]+1:1, l?l[2]+5:480, l?l[2]+55:530]);render()">＋ Add a period</button></div>
+      <div class="tiny" style="margin-bottom:8px">Students pick a class or Study hall for each of these. Tutoring can't be booked during their classes.</div>
+    </div>
+    <div class="sectlabel">Lunches</div>
+    <div class="card" style="padding:12px 14px 4px">
+      ${d.bell.lunches.map((l,i)=>`<div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        <input value="${esc(l[0])}" style="flex:0 0 110px;${inp}" oninput="S.timesDraft.bell.lunches[${i}][0]=this.value">
+        <input type="time" value="${t2v(l[1])}" step="300" style="flex:0 0 118px;${inp}" onchange="S.timesDraft.bell.lunches[${i}][1]=timeToMin(this.value);render()"><span class="tiny">to</span>
+        <input type="time" value="${t2v(l[2])}" step="300" style="flex:0 0 118px;${inp}" onchange="S.timesDraft.bell.lunches[${i}][2]=timeToMin(this.value);render()">
+        <button class="mini danger" onclick="S.timesDraft.bell.lunches.splice(${i},1);render()">Remove</button></div>`).join('')}
+      <div style="margin-bottom:8px"><button class="btn ghost sm" onclick="S.timesDraft.bell.lunches.push([String.fromCharCode(65+S.timesDraft.bell.lunches.length)+' lunch',690,720]);render()">＋ Add a lunch</button></div>
+      <div class="tiny" style="margin-bottom:8px">Each student picks one. Their lunch stays open for tutoring even when it falls inside a class period.</div>
+    </div>
     <div class="sectlabel">Quiet hours · no messaging</div>
     <div class="card"><div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
       <input type="time" value="${t2v(d.quiet.start)}" step="300" style="flex:0 0 118px;${inp}" onchange="S.timesDraft.quiet.start=timeToMin(this.value);render()"><span class="tiny">to</span>
@@ -3422,8 +3486,9 @@ async function saveSessionTimes(btn){
   btn.disabled=true; btn.textContent='Saving…';
   try{
     const quiet={ start:+d.quiet.start, end:+d.quiet.end, days:d.quiet.days.slice().sort() };
-    await sbFetch('/rest/v1/sl_settings', { method:'POST', headers:{ Prefer:'return=minimal,resolution=merge-duplicates' }, body:JSON.stringify([{ key:'sessions', value, updated_at:new Date().toISOString(), updated_by:A.user.id },{ key:'quiet', value:quiet, updated_at:new Date().toISOString(), updated_by:A.user.id }]) });
-    S.settings = S.settings||{}; S.settings.sessions=value; S.settings.quiet=quiet; applySessionSettings(value); S.timesDraft=null;
+    const bellV={ periods:d.bell.periods.map(x=>[+x[0],+x[1],+x[2]]), lunches:d.bell.lunches.map(x=>[String(x[0]).trim(),+x[1],+x[2]]) };
+    await sbFetch('/rest/v1/sl_settings', { method:'POST', headers:{ Prefer:'return=minimal,resolution=merge-duplicates' }, body:JSON.stringify([{ key:'sessions', value, updated_at:new Date().toISOString(), updated_by:A.user.id },{ key:'quiet', value:quiet, updated_at:new Date().toISOString(), updated_by:A.user.id },{ key:'bell', value:bellV, updated_at:new Date().toISOString(), updated_by:A.user.id }]) });
+    S.settings = S.settings||{}; S.settings.sessions=value; S.settings.quiet=quiet; S.settings.bell=bellV; applySessionSettings(value); S.timesDraft=null;
     toast('Session times saved'); render();
   }catch(e){ toast(/sl_settings/.test(e.message) ? 'The settings table is not set up yet — run sql/sl_settings_and_groups.sql.' : e.message); btn.disabled=false; btn.textContent='Save for everyone'; }
 }
