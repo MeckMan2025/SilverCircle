@@ -704,6 +704,7 @@ function renderNav(){
       ${item('tutoring','🤝','Tutoring', inc ? `<span class="count">${inc}</span>` : '')}
       <hr>
       ${item('community','💬','Community')}
+      <hr>
     </nav>`}
 `;
 }
@@ -900,7 +901,7 @@ function renderAdminDay(c){
     <div class="sectlabel">Sessions</div>
     ${sessions.length ? sessions.map(r=>`<div class="card row">
       <div class="avatar" style="background:${courseColor(r.course)}">${courseEmoji(r.course)}</div>
-      <div style="min-width:0;flex:1"><div style="font-weight:800">${esc(r.student_alias||'Student')} with ${esc(r.tutor_alias||'Tutor')}</div>
+      <div style="min-width:0;flex:1;cursor:pointer" onclick="openView({type:'studentSessions', id:'${r.student_id}'})"><div style="font-weight:800"><u>${esc(r.student_alias||'Student')}</u> with ${esc(r.tutor_alias||'Tutor')}</div>
         <div class="tiny">${esc(r.course)}${r.time?' · '+esc(r.time):''}${r.minutes?' · '+r.minutes+' min':''}${r.location?' · '+esc(r.location):''}</div></div>
       <button class="btn sm gray" onclick="adminRemoveSession('${r.id}')">Remove</button>
     </div>`).join('') : '<div class="card tiny" style="text-align:center">No sessions booked for this day.</div>'}
@@ -932,7 +933,7 @@ function upcomingHtml(){
   const next = (S.allRequests||[]).filter(r=>r.status==='accepted' && r.date && r.date>=today)
     .sort((a,b)=>a.date.localeCompare(b.date) || (a.time||'').localeCompare(b.time||'')).slice(0,5);
   if(!next.length) return '<div class="card tiny" style="text-align:center">No sessions booked yet.</div>';
-  return next.map(r=>`<div class="card row" style="cursor:pointer" onclick="go('calendar')">
+  return next.map(r=>`<div class="card row" style="cursor:pointer" onclick="openView({type:'studentSessions', id:'${r.student_id}'})">
     <div class="avatar" style="background:${courseColor(r.course)}">${courseEmoji(r.course)}</div>
     <div style="min-width:0;flex:1"><div style="font-weight:800">${esc(r.student_alias||'Student')} with ${esc(r.tutor_alias||'Tutor')}</div>
       <div class="tiny">${esc(r.course)} · ${dayWord(r.date)}${r.time?' · '+esc(r.time):''}${r.location?' · '+esc(r.location):''}</div></div>
@@ -1036,9 +1037,7 @@ function tutorDashboard(){
     <div class="cols even" style="margin-top:6px">
       <div>
         <div class="sectlabel">This week's sessions</div>
-        <div class="card">${sessions.length ? sessions.map(x=>`<div class="sessrow"><div class="avatar" style="width:36px;height:36px;font-size:14px;background:${courseColor(x.course)}">${courseEmoji(x.course)}</div>
-          <div style="min-width:0;flex:1"><div class="who">${esc(x.with)} <span class="tiny">· ${esc(x.course)}</span></div><div class="meta">${esc(dayWord(x.date))} · ${esc(x.time)} · ${esc(x.format)}${x.location?' · 📍 '+esc(x.location):''}</div></div>
-          ${x.date<=today ? `<button class="btn sm green" onclick="completeSession('${x.id}')">Done</button>` : ''}</div>`).join('') : `<div class="tiny" style="text-align:center;padding:8px">Nothing booked this week.</div>`}</div>
+        <div class="card">${sessions.length ? sessionsByStudent(sessions.map(x=>findReq(x.id)).filter(Boolean)).map(g=>studentCardHtml(g, true)).join('') : `<div class="tiny" style="text-align:center;padding:8px">Nothing booked this week.</div>`}</div>
       </div>
       <div>
         <div class="sectlabel">Availability</div>
@@ -1169,6 +1168,8 @@ function sessionColumn(role){
          <button class="btn ghost sm" style="width:100%;margin-top:6px" onclick="go('classes')">Find a tutor</button>`;
   }
   const done = S.incoming.filter(r=>r.status==='done').length;
+  if(role==='tutor') return sessionsByStudent(rows).map(g=>studentCardHtml(g, true)).join('')
+    + (done ? `<div class="tiny" style="text-align:center;margin-top:8px">${done} session${done===1?'':'s'} completed · ${S.hours} service hours</div>` : '');
   return rows.map(r=>{
     const other = role==='tutor' ? r.student_alias : r.tutor_alias;
     const dayLabel = r.date ? (r.date===today ? 'Today' : parseYmd(r.date).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'})) : 'Day TBD';
@@ -1186,6 +1187,59 @@ function sessionColumn(role){
       ${r.status==='accepted' ? cancelBtn(r.id,'session').replace('margin-left:auto;','') : role==='tutor' && r.status==='offered' ? cancelBtn(r.id,'offer').replace('margin-left:auto;','') : ''}
     </div>`;
   }).join('') + (role==='tutor' && done ? `<div class="tiny" style="text-align:center;margin-top:8px">${done} session${done===1?'':'s'} completed · ${S.hours} service hours</div>` : '');
+}
+
+// Sessions belong to one student each. Lists show one card per student
+// (classes, how many sessions, the next one); tapping it opens that student's
+// sessions, each with its own chat, plan, Done and cancel.
+function sessionsByStudent(rows){
+  const by={};
+  rows.forEach(r=>{ (by[r.student_id]=by[r.student_id]||[]).push(r); });
+  const today=ymd(new Date());
+  return Object.entries(by).map(([id,list])=>{
+    list.sort((a,b)=>(a.date||'9999').localeCompare(b.date||'9999')||(a.time||'').localeCompare(b.time||''));
+    const next=list.find(r=>r.date && r.date>=today && r.status==='accepted') || list.find(r=>r.status==='accepted') || list[0];
+    return { id, alias:list[0].student_alias||'Student', list, next, courses:[...new Set(list.map(r=>r.course))] };
+  }).sort((a,b)=>(a.next?.date||'9999').localeCompare(b.next?.date||'9999'));
+}
+function studentCardHtml(g, compact){
+  const today=ymd(new Date()), n=g.list.length, r=g.next;
+  const when = r && r.date ? (r.date===today ? 'Today' : parseYmd(r.date).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'}))+(r.time?' · '+r.time:'') : 'Day TBD';
+  const waiting = g.list.filter(x=>x.status==='offered').length;
+  return `<div class="${compact?'sessrow':'card row'}" style="cursor:pointer" onclick="openView({type:'studentSessions', id:'${g.id}'})">
+    ${avatarDot(initials(g.alias), null, (compact?'width:38px;height:38px;font-size:15px;':'')+'background:'+courseColor(g.courses[0]))}
+    <div style="min-width:0;flex:1">
+      <div class="${compact?'who':''}" style="${compact?'':'font-weight:800'}">${esc(g.alias)} <span class="tiny">· ${g.courses.map(esc).join(', ')}</span></div>
+      <div class="${compact?'meta':'tiny'}">${n} session${n===1?'':'s'} · next ${esc(when)}${waiting?` · ${waiting} waiting on them`:''}</div>
+    </div>
+    <div style="color:var(--muted)">›</div>
+  </div>`;
+}
+function renderStudentSessions(c){
+  const id=S.overlay.id, today=ymd(new Date()), admin=isAdmin();
+  const src = admin ? (S.allRequests||[]) : S.incoming;
+  const rows = src.filter(r=>r.student_id===id && ['accepted','offered','done'].includes(r.status))
+    .sort((a,b)=>(a.date||'9999').localeCompare(b.date||'9999')||(a.time||'').localeCompare(b.time||''));
+  const alias = (rows[0]||src.find(r=>r.student_id===id)||{}).student_alias || 'Student';
+  const up = rows.filter(r=>r.status!=='done'), done = rows.filter(r=>r.status==='done').reverse();
+  const card = r => `<div class="card"><div class="row">
+      <div class="avatar" style="background:${courseColor(r.course)}">${courseEmoji(r.course)}</div>
+      <div style="min-width:0;flex:1"><div style="font-weight:800">${esc(r.course)}${r.topic?` <span class="tiny">· ${esc(r.topic)}</span>`:''}</div>
+        <div class="tiny">${r.date?esc(fmtDate(r.date)):'Day TBD'} · ${esc(r.time||'TBD')}${r.location?' · 📍 '+esc(r.location):''}${admin?' · with '+esc(r.tutor_alias||'Tutor'):''}</div></div>
+      ${r.status==='done' ? '<span class="pill" style="background:#eef0f6;color:#5b6077">Done</span>'
+        : r.status==='offered' ? '<span class="pill">Waiting on them</span>'
+        : admin ? `<button class="btn sm gray" onclick="adminRemoveSession('${r.id}')">Remove</button>`
+        : (r.date && r.date<=today ? `<button class="btn sm green" onclick="completeSession('${r.id}')">Done</button>` : '<span class="pill" style="background:#e4f6ec;color:#2e9b6a">Confirmed</span>')}
+      ${!admin && r.status==='accepted' ? cancelBtn(r.id,'session').replace('margin-left:auto;','') : !admin && r.status==='offered' ? cancelBtn(r.id,'offer').replace('margin-left:auto;','') : ''}
+    </div>${!admin && r.status!=='done' ? actsHtml(r) : ''}</div>`;
+  c.innerHTML = `
+    <button class="back" onclick="closeView()">‹ Back</button>
+    <div class="row" style="margin-bottom:6px">${avatarDot(initials(alias), null, 'background:'+courseColor((rows[0]||{}).course))}
+      <div><h2 class="title" style="margin:0">${esc(alias)}</h2><div class="tiny">${up.length} upcoming · ${done.length} done</div></div></div>
+    <div class="sectlabel">Sessions</div>
+    ${up.length ? up.map(card).join('') : '<div class="card tiny" style="text-align:center">No upcoming sessions.</div>'}
+    ${done.length ? `<div class="sectlabel">Done</div>${done.map(card).join('')}` : ''}
+    ${!admin && S.me.isTutor ? `<button class="btn ghost" style="margin-top:12px" onclick="openView({type:'schedule', student:'${id}', course:'${esc((rows[0]||{}).course||'')}'})">📅 Schedule another session</button>` : ''}`;
 }
 
 // Cards for my classes, plus one to add more. removable shows the × on each.
@@ -2528,7 +2582,7 @@ function renderTutoring(c){
         ${actsHtml(r)}
       </div>`).join('')}` : ''}
 
-    ${tutoring.length ? `<div class="sectlabel">Sessions you're tutoring</div>${tutoring.map(sessionCard).join('')}` : ''}
+    ${tutoring.length ? `<div class="sectlabel">Students you're tutoring · tap one to see their sessions</div>${sessionsByStudent(S.incoming.filter(r=>r.status==='accepted')).map(g=>studentCardHtml(g)).join('')}` : ''}
 
     ${S.incoming.filter(r=>r.status==='done').length ? `<div class="sectlabel">Completed sessions · ${S.hours} service hours</div>
       ${S.incoming.filter(r=>r.status==='done').sort((a,b)=>(b.done_at||'').localeCompare(a.done_at||'')).map(r=>`<div class="card row">
@@ -3564,6 +3618,7 @@ function renderOverlay(c){
   if(o.type==='rate') return renderRate(c);
   if(o.type==='groupChat') return renderGroupChat(c);
   if(o.type==='member') return renderMemberDetail(c);
+  if(o.type==='studentSessions') return renderStudentSessions(c);
   S.overlay=null; return renderBody(c);   // an unknown overlay falls back to the page
 }
 
