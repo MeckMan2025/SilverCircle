@@ -296,6 +296,9 @@
   .bigbtn{display:block; width:100%; margin-top:18px; padding:16px; font-size:16px; border-radius:16px}
   .listrow{display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); cursor:pointer}
   .listrow:last-child{border-bottom:none}
+  .listrow .go{color:var(--muted); font-weight:800; font-size:16px; opacity:0; transform:translateX(-4px); transition:opacity .15s, transform .15s}
+  .listrow:hover .go, .listrow:focus-visible .go{opacity:1; transform:none}
+  @media (hover:none){ .listrow .go{opacity:1; transform:none} }
   .listrow .dot{width:10px; height:10px; border-radius:50%; flex:0 0 auto}
   .listrow .t{font-weight:800; font-size:14px; min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
   .listrow .r{font-size:12px; color:var(--muted); font-weight:700; white-space:nowrap}
@@ -1052,10 +1055,7 @@ function tutorDashboard(){
     <div class="cols even" style="margin-top:6px">
       <div>
         <div class="sectlabel">Classes you tutor</div>
-        <div class="card">${myCourses.length ? DEPTS.filter(d=>d.courses.some(x=>myCourses.includes(x))).map(d=>{
-          const cs=d.courses.filter(x=>myCourses.includes(x)), n=new Set(S.roster.filter(r=>cs.includes(r.course)).map(r=>r.user_id)).size;
-          return `<div class="listrow" onclick="S.tutorDept='${esc(d.name)}'; go('classes')"><span class="dot" style="background:${d.color}"></span><span class="t">${d.emoji} ${esc(d.name)}</span><span class="r">${n} student${n===1?'':'s'}</span></div>`;
-        }).join('') : `<div class="tiny" style="text-align:center;padding:8px">None yet.</div>`}</div>
+        <div class="card">${tutorClassBox(myCourses)}</div>
       </div>
       <div>
         <div class="sectlabel">Questions needing answers</div>
@@ -1189,6 +1189,25 @@ function sessionColumn(role){
       ${r.status==='accepted' ? cancelBtn(r.id,'session').replace('margin-left:auto;','') : role==='tutor' && r.status==='offered' ? cancelBtn(r.id,'offer').replace('margin-left:auto;','') : ''}
     </div>`;
   }).join('') + (role==='tutor' && done ? `<div class="tiny" style="text-align:center;margin-top:8px">${done} session${done===1?'':'s'} completed · ${S.hours} service hours</div>` : '');
+}
+
+// The tutor home's "Classes you tutor" box. Subjects first; hovering one shows
+// an arrow, and clicking it turns the box into that subject's classes, with a
+// way back. Opening a class from there goes to the class itself.
+function tutorClassBox(myCourses){
+  if(!myCourses.length) return `<div class="tiny" style="text-align:center;padding:8px">None yet.</div>`;
+  const count = cs => new Set(S.roster.filter(r=>cs.includes(r.course)).map(r=>r.user_id)).size;
+  const plural = n => n+' student'+(n===1?'':'s');
+  const d = DEPTS.find(x=>x.name===S.homeDept && x.courses.some(c=>myCourses.includes(c)));
+  if(d){
+    const cs = d.courses.filter(x=>myCourses.includes(x));
+    return `<div class="listrow" onclick="S.homeDept=null; render()" style="color:var(--muted)"><span class="t" style="color:var(--muted)">‹ ${d.emoji} ${esc(d.name)}</span><span class="r">${cs.length} class${cs.length===1?'':'es'}</span></div>`
+      + cs.map(c=>`<div class="listrow" onclick="openClass('${esc(c)}')"><span class="dot" style="background:${courseColor(c)}"></span><span class="t">${esc(c)}</span><span class="r">${plural(count([c]))}</span><span class="go">›</span></div>`).join('');
+  }
+  return DEPTS.filter(x=>x.courses.some(c=>myCourses.includes(c))).map(x=>{
+    const cs = x.courses.filter(c=>myCourses.includes(c));
+    return `<div class="listrow" tabindex="0" onclick="S.homeDept='${esc(x.name)}'; render()" onkeydown="if(event.key==='Enter'){S.homeDept='${esc(x.name)}'; render()}"><span class="dot" style="background:${x.color}"></span><span class="t">${x.emoji} ${esc(x.name)}</span><span class="r">${cs.length} class${cs.length===1?'':'es'} · ${plural(count(cs))}</span><span class="go">›</span></div>`;
+  }).join('');
 }
 
 // Sessions belong to one student each. Lists show one card per student
