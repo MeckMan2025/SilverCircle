@@ -1052,7 +1052,10 @@ function tutorDashboard(){
     <div class="cols even" style="margin-top:6px">
       <div>
         <div class="sectlabel">Classes you tutor</div>
-        <div class="card">${myCourses.length ? myCourses.map(cs=>classRow(cs, S.roster.filter(r=>r.course===cs).length+' student'+(S.roster.filter(r=>r.course===cs).length===1?'':'s'))).join('') : `<div class="tiny" style="text-align:center;padding:8px">None yet.</div>`}</div>
+        <div class="card">${myCourses.length ? DEPTS.filter(d=>d.courses.some(x=>myCourses.includes(x))).map(d=>{
+          const cs=d.courses.filter(x=>myCourses.includes(x)), n=new Set(S.roster.filter(r=>cs.includes(r.course)).map(r=>r.user_id)).size;
+          return `<div class="listrow" onclick="S.tutorDept='${esc(d.name)}'; go('classes')"><span class="dot" style="background:${d.color}"></span><span class="t">${d.emoji} ${esc(d.name)}</span><span class="r">${n} student${n===1?'':'s'}</span></div>`;
+        }).join('') : `<div class="tiny" style="text-align:center;padding:8px">None yet.</div>`}</div>
       </div>
       <div>
         <div class="sectlabel">Questions needing answers</div>
