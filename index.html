@@ -2281,19 +2281,23 @@ function classChoices(){
 }
 function scheduleEditorHtml(d){
   const B=bell(), { mine, rest }=classChoices();
-  const opts = v => `<option value="" ${!v?'selected':''}>Pick a class…</option>
+  // Only the classes you take. "Another class…" opens the whole list for that
+  // one period, and a class you picked before stays listed.
+  const full = n => !mine.length || (d.full && d.full[n]);
+  const opts = (v, n) => `<option value="" ${!v?'selected':''}>Pick a class…</option>
       <option value="${STUDY}" ${v===STUDY?'selected':''}>📗 Study hall</option>
       <option value="${PE_DAILY}" ${v===PE_DAILY?'selected':''}>🏃 Physical Education</option>
       ${peSplits() ? `<option value="${PE1}" ${v===PE1?'selected':''}>🏃 PE · Day 1</option><option value="${PE2}" ${v===PE2?'selected':''}>🏃 PE · Day 2</option>` : ''}
       ${mine.length ? `<optgroup label="Your classes">${mine.map(x=>`<option ${v===x?'selected':''}>${esc(x)}</option>`).join('')}</optgroup>` : ''}
-      ${rest.map(({d,cs})=>`<optgroup label="${d.emoji} ${esc(d.name)}">${cs.map(x=>`<option ${v===x?'selected':''}>${esc(x)}</option>`).join('')}</optgroup>`).join('')}`;
+      ${n!==undefined && full(n) ? rest.map(({d,cs})=>`<optgroup label="${d.emoji} ${esc(d.name)}">${cs.map(x=>`<option ${v===x?'selected':''}>${esc(x)}</option>`).join('')}</optgroup>`).join('')
+        : `${v && ALL_COURSES.includes(v) && !mine.includes(v) ? `<option selected>${esc(v)}</option>` : ''}<option value="__more">＋ Another class…</option>`}`;
   return `<div class="card">
-    <div class="tiny" style="font-size:13px;margin-bottom:10px;line-height:1.5">Pick the class you have each period, or <b>Study hall</b>. Nobody can book tutoring during a class. Study hall and lunch stay open.</div>
+    <div class="tiny" style="font-size:13px;margin-bottom:10px;line-height:1.5">Pick the class you have each period, or <b>Study hall</b>. Nobody can book tutoring during a class. Study hall and lunch stay open.${mine.length ? ' The list shows the classes you take; pick <b>Another class…</b> if one is missing.' : ''}</div>
     ${B.periods.map(([n,a,b])=>{ const v=d.periods[n]||'', o=d.periods[n+'b']||STUDY; return `<div class="periodrow ${v===STUDY?'study':''}">
       <span class="pn">Period ${n}</span><span class="pt">${minLabel(a)} – ${minLabel(b)}</span>
-      <select aria-label="Period ${n}" onchange="S.schedDraft.periods['${n}']=this.value; if(!isPE(this.value)) delete S.schedDraft.periods['${n}b']; render()">${opts(v)}</select>
+      <select aria-label="Period ${n}" onchange="if(this.value==='__more'){ S.schedDraft.full=S.schedDraft.full||{}; S.schedDraft.full['${n}']=true; render(); return; } S.schedDraft.periods['${n}']=this.value; if(!isPE(this.value)) delete S.schedDraft.periods['${n}b']; render()">${opts(v, n)}</select>
       ${isPE(v) ? `<div style="flex-basis:100%;display:flex;align-items:center;gap:6px;padding-left:78px"><span class="tiny" style="font-weight:800">${v===PE1?'Day 2':'Day 1'}:</span>
-        <select aria-label="Period ${n} on the other day" onchange="S.schedDraft.periods['${n}b']=this.value; render()">${opts(o).replace(/<option value="PE[^>]*>[^<]*<\/option>/g,'').replace(/<option value="Physical Education"[^>]*>[^<]*<\/option>/,'').replace('<option value="" selected>Pick a class…</option>','').replace('<option value="">Pick a class…</option>','')}</select></div>` : ''}
+        <select aria-label="Period ${n} on the other day" onchange="if(this.value==='__more'){ S.schedDraft.full=S.schedDraft.full||{}; S.schedDraft.full['${n}b']=true; render(); return; } S.schedDraft.periods['${n}b']=this.value; render()">${opts(o, n+'b').replace(/<option value="PE[^>]*>[^<]*<\/option>/g,'').replace(/<option value="Physical Education"[^>]*>[^<]*<\/option>/,'').replace('<option value="" selected>Pick a class…</option>','').replace('<option value="">Pick a class…</option>','')}</select></div>` : ''}
     </div>`; }).join('')}
     ${peSplits() ? '<div class="tiny" style="margin-top:6px">Have PE every other day? Pick <b>PE · Day 1</b> or <b>PE · Day 2</b>, then what you have that period on the other day.</div>' : ''}
     <div style="margin-top:14px"><div style="font-weight:800;font-size:14px;margin-bottom:6px">Which lunch do you have?</div>
