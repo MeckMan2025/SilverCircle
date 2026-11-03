@@ -1264,7 +1264,7 @@ function sessionColumn(role){
         <div class="meta">${esc(r.topic||'')}${r.topic?' · ':''}${esc(r.time||'Time TBD')} · ${esc(r.format)}${r.location?' · 📍 '+esc(r.location):''}</div>
       </div>
       ${pending ? `<span class="pill" style="background:#fbf1e2;color:#c98b34;cursor:pointer" onclick="go('tutoring')">${tag}</span>` : `<span class="when">${esc(dayLabel)}</span>`}
-      ${role==='tutor' && !pending && r.date && r.date<=today ? `<button class="btn sm green" onclick="completeSession('${r.id}')">Done</button>` : ''}
+      ${role==='tutor' && !pending ? doneBtn(r) : ''}
       ${r.status==='accepted' ? cancelBtn(r.id,'session').replace('margin-left:auto;','') : role==='tutor' && r.status==='offered' ? cancelBtn(r.id,'offer').replace('margin-left:auto;','') : ''}
     </div>`;
   }).join('') + (role==='tutor' && done ? `<div class="tiny" style="text-align:center;margin-top:8px">${done} session${done===1?'':'s'} completed · ${hoursLink(`<u>${hoursLabel(S.hours)} service hours</u>`)}</div>` : '');
@@ -1326,7 +1326,7 @@ function renderStudentSessions(c){
         : r.status==='declined' || r.status==='cancelled' ? `<span class="pill" style="background:#fdecef;color:#c23b5e">${r.status==='declined'?'Declined':'Cancelled'}</span>`
         : admin ? `<span class="pill">${r.status==='pending'?'Asked':r.status==='offered'?'Offered':'Confirmed'}</span><button class="btn sm gray" onclick="adminRemoveSession('${r.id}')">Remove</button>`
         : r.status==='offered' ? '<span class="pill">Waiting on them</span>'
-        : (r.date && r.date<=today ? `<button class="btn sm green" onclick="completeSession('${r.id}')">Done</button>` : '<span class="pill" style="background:#e4f6ec;color:#2e9b6a">Confirmed</span>')}
+        : (doneBtn(r) || '<span class="pill" style="background:#e4f6ec;color:#2e9b6a">Confirmed</span>')}
       ${!admin && r.status==='accepted' ? cancelBtn(r.id,'session').replace('margin-left:auto;','') : !admin && r.status==='offered' ? cancelBtn(r.id,'offer').replace('margin-left:auto;','') : ''}
     </div>${!admin && r.status!=='done' ? actsHtml(r) : ''}</div>`;
   c.innerHTML = `
@@ -1365,7 +1365,7 @@ function sessionCard(s){
       <div style="font-weight:800">${esc(s.course)}</div>
       <div class="tiny">${esc(s.day)} · ${esc(s.time)} · with ${esc(s.with)} · ${esc(s.format)}${s.location?' · 📍 '+esc(s.location):''}</div>
     </div>
-    ${s.role==='tutor' ? `<button class="btn sm green" style="margin-left:auto" onclick="completeSession('${s.id}')">Complete</button>` : `<span class="pill" style="margin-left:auto">Confirmed</span>`}
+    ${s.role==='tutor' && r && doneBtn(r) ? `<span style="margin-left:auto">${doneBtn(r,'Complete')}</span>` : `<span class="pill" style="margin-left:auto">Confirmed</span>`}
     ${cancelBtn(s.id, 'session').replace('margin-left:auto;','')}
   </div>${r ? actsHtml(r) : ''}</div>`;
 }
@@ -2886,8 +2886,25 @@ async function submitRating(id, btn){
     await loadData(); closeView(); toast('Thanks — that helps 🙏');
   }catch(e){ toast(/sl_ratings/.test(e.message) ? 'Ratings are not set up yet — run sql/sl_settings_and_groups.sql.' : e.message); btn.disabled=false; btn.textContent='Send rating'; }
 }
+// A session can only be marked done once it has finished: its date, its start
+// time, plus its length. A session with no set time is treated as starting
+// after school (3:30 PM). No date, no done.
+function sessionEnd(r){
+  if(!r || !r.date) return null;
+  const start = slotMin(splitOptions(r.time)[0]);
+  const d = parseYmd(r.date); d.setHours(0, (start==null ? 15*60+30 : start) + sessMin(r), 0, 0);
+  return d;
+}
+const canComplete = r => { const e=sessionEnd(r); return !!e && Date.now() >= e.getTime(); };
+// The Done button, or a note saying when it unlocks (nothing for a later day).
+function doneBtn(r, label){
+  if(canComplete(r)) return `<button class="btn sm green" onclick="completeSession('${r.id}')">${label||'Done'}</button>`;
+  const e=sessionEnd(r); if(!e || ymd(e)!==ymd(new Date())) return '';
+  return `<span class="pill" title="You can mark it done once the session is over" style="background:#eef0f6;color:#5b6077">Done at ${minLabel(e.getHours()*60+e.getMinutes())}</span>`;
+}
 function completeSession(id){
   const r=findReq(id);
+  if(!canComplete(r)){ const e=sessionEnd(r); toast(e ? 'You can mark it done after it ends, '+(ymd(e)===ymd(new Date()) ? 'at '+minLabel(e.getHours()*60+e.getMinutes()) : 'on '+fmtDate(ymd(e)))+'.' : 'This session has no date yet.'); return; }
   patchRequest(id, { status:'done', done_at:new Date().toISOString() }, 'Logged '+(r?sessMin(r):45)+' minutes of service 🎉');
 }
 
