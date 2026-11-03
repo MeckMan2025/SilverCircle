@@ -2889,23 +2889,36 @@ async function submitRating(id, btn){
 // A session can only be marked done once it has finished: its date, its start
 // time, plus its length. A session with no set time is treated as starting
 // after school (3:30 PM). No date, no done.
-function sessionEnd(r){
+function sessionStart(r){
   if(!r || !r.date) return null;
   const start = slotMin(splitOptions(r.time)[0]);
-  const d = parseYmd(r.date); d.setHours(0, (start==null ? 15*60+30 : start) + sessMin(r), 0, 0);
+  const d = parseYmd(r.date); d.setHours(0, start==null ? 15*60+30 : start, 0, 0);
   return d;
 }
+function sessionEnd(r){ const st=sessionStart(r); return st ? new Date(st.getTime() + sessMin(r)*60000) : null; }
 const canComplete = r => { const e=sessionEnd(r); return !!e && Date.now() >= e.getTime(); };
-// The Done button, or a note saying when it unlocks (nothing for a later day).
+// Started but not over: it can be ended early, and only the minutes so far count.
+const canEndEarly = r => { const st=sessionStart(r); return !!st && !canComplete(r) && Date.now() >= st.getTime(); };
+const clock = d => minLabel(d.getHours()*60+d.getMinutes());
+// The Done button; "Done early" once it has started; a note before it starts
+// today; nothing for a later day.
 function doneBtn(r, label){
   if(canComplete(r)) return `<button class="btn sm green" onclick="completeSession('${r.id}')">${label||'Done'}</button>`;
-  const e=sessionEnd(r); if(!e || ymd(e)!==ymd(new Date())) return '';
-  return `<span class="pill" title="You can mark it done once the session is over" style="background:#eef0f6;color:#5b6077">Done at ${minLabel(e.getHours()*60+e.getMinutes())}</span>`;
+  if(canEndEarly(r)) return `<button class="btn sm" style="background:#fff3e0;color:#b26a00;border:1px solid #f3d3a4" title="Ends the session now. Only the minutes so far count." onclick="completeSession('${r.id}', true)">Done early</button>`;
+  const st=sessionStart(r); if(!st || ymd(st)!==ymd(new Date())) return '';
+  return `<span class="pill" title="It can be marked done once it starts" style="background:#eef0f6;color:#5b6077">Starts ${clock(st)}</span>`;
 }
-function completeSession(id){
-  const r=findReq(id);
-  if(!canComplete(r)){ const e=sessionEnd(r); toast(e ? 'You can mark it done after it ends, '+(ymd(e)===ymd(new Date()) ? 'at '+minLabel(e.getHours()*60+e.getMinutes()) : 'on '+fmtDate(ymd(e)))+'.' : 'This session has no date yet.'); return; }
-  patchRequest(id, { status:'done', done_at:new Date().toISOString() }, 'Logged '+(r?sessMin(r):45)+' minutes of service 🎉');
+function completeSession(id, early){
+  const r=findReq(id), st=sessionStart(r);
+  if(!canComplete(r) && !(early && canEndEarly(r))){
+    toast(st ? 'You can mark it done once it starts, '+(ymd(st)===ymd(new Date()) ? 'at '+clock(st) : 'on '+fmtDate(ymd(st)))+'.' : 'This session has no date yet.'); return; }
+  if(early){
+    const mins=Math.max(1, Math.min(sessMin(r), Math.round((Date.now()-st.getTime())/60000)));
+    if(!confirm('End this session early? '+mins+' minute'+(mins===1?'':'s')+' will count, not '+sessMin(r)+'.')) return;
+    patchRequest(id, { status:'done', done_at:new Date().toISOString(), minutes:mins }, 'Ended early · logged '+mins+' minute'+(mins===1?'':'s'));
+    return;
+  }
+  patchRequest(id, { status:'done', done_at:new Date().toISOString() }, 'Logged '+sessMin(r)+' minutes of service 🎉');
 }
 
 /* -------- COMMUNITY -------- */
