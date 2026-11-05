@@ -141,6 +141,7 @@
   .msg.sys{align-self:center; background:none; border:none; color:var(--muted); font-size:12px; font-weight:700; text-align:center}
   .acts{display:flex; gap:6px; flex-wrap:wrap; margin-top:8px}
   .acts button{border:1px solid var(--line); background:#fff; border-radius:9px; padding:6px 10px; font:inherit; font-size:12.5px; font-weight:800; color:var(--blue-d); cursor:pointer}
+  .mini{border:1px solid var(--line); background:#fff; border-radius:8px; padding:2px 8px; font:inherit; font-size:11.5px; font-weight:800; color:var(--blue-d); cursor:pointer; white-space:nowrap}
   .cal .day{position:relative}
   .cal .day .plus{position:absolute; top:4px; right:4px; width:24px; height:24px; border-radius:50%; border:none; cursor:pointer;
     background:#f2f0fb; color:var(--muted); font-size:16px; font-weight:800; line-height:1; display:flex; align-items:center; justify-content:center}
@@ -887,7 +888,7 @@ function renderHome(c){
       <div class="lead">${new Date().toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'})}</div></div>
       ${adminButtonHtml()}
     </div>`;
-  c.innerHTML = head + scheduleNudgeHtml() + ratePromptHtml() + (S.mode==='tutor' && S.me.isTutor ? tutorDashboard() : studentDashboard());
+  c.innerHTML = head + scheduleNudgeHtml() + checkinPromptHtml() + ratePromptHtml() + (S.mode==='tutor' && S.me.isTutor ? tutorDashboard() : studentDashboard());
 }
 
 // The administrator's home: what is waiting, where the gaps are, who is
@@ -915,6 +916,7 @@ function renderAdminHome(c){
     ${stale.length ? `<div class="card row" style="cursor:pointer" onclick="S.adminReqFilter='pending';go('admin-requests')"><div class="avatar" style="background:var(--blue-d)">⏳</div>
       <div style="flex:1"><div style="font-weight:800">${stale.length} request${stale.length===1?'':'s'} waiting more than two days</div><div class="tiny">Nobody has answered yet. Worth a nudge.</div></div><div style="color:var(--muted)">›</div></div>` : ''}
     ${reportsHtml()}
+    ${adminCheckinsHtml()}
     <div class="sectlabel">This week</div>
     ${weekPulseHtml()}
     <div class="sectlabel">This week's tutors <span class="tiny" style="font-weight:600;text-transform:none;letter-spacing:0">· how many have said they're free each day, and sessions booked</span></div>
@@ -1112,6 +1114,8 @@ function tutorDashboard(){
     </div>
 
     ${inc.length ? `<div class="sectlabel">New requests — your call (${inc.length})</div>${homeRequestsHtml(inc)}` : ''}
+
+    ${helpWantedHtml()}
 
     ${urgent.length ? `<div class="sectlabel">🆘 Help needed now</div><div class="card">${urgent.map(p=>`<div class="listrow urgent" style="padding-left:8px" onclick="openView({type:'course',course:'${esc(p.course)}',sec:'community'})"><span class="t" style="font-weight:700">${esc(p.author_alias)}: “${esc(p.body.length>80?p.body.slice(0,80)+'…':p.body)}”</span><span class="r">${esc(p.course)} · reply ›</span></div>`).join('')}</div>` : ''}
 
@@ -1318,21 +1322,34 @@ function renderStudentSessions(c){
     .sort((a,b)=>(a.date||'9999').localeCompare(b.date||'9999')||(a.time||'').localeCompare(b.time||''));
   const alias = (rows[0]||src.find(r=>r.student_id===id)||{}).student_alias || 'Student';
   const up = rows.filter(r=>['accepted','offered','pending'].includes(r.status)), done = rows.filter(r=>r.status==='done').reverse(), other = rows.filter(r=>['declined','cancelled'].includes(r.status)).reverse();
-  const card = r => `<div class="card"><div class="row">
+  // Delete mode: the cancel buttons only show after tapping Delete at the top.
+  const cancelKind = r => r.status==='accepted' ? 'session' : r.status==='offered' ? 'offer' : null;
+  const canCancel = up.some(cancelKind);
+  const del = !admin && canCancel && !!S.overlay.delMode;
+  const removeBtn = r => { const k=cancelKind(r); if(!del || !k) return '';
+    return S.confirmCancel===r.id ? cancelBtn(r.id,k).replace('margin-left:auto;','')
+      : `<button class="btn sm pink" onclick="S.confirmCancel='${r.id}';render()">${CANCEL_WORDS[k][0]}</button>`; };
+  // One chat bubble at the top opens the chat for the next session.
+  const chatWith = admin ? null : up[0] || done[0] || null;
+  const card = r => `<div class="card" style="padding:10px 12px"><div class="row">
       <div class="avatar" style="background:${courseColor(r.course)}">${courseEmoji(r.course)}</div>
       <div style="min-width:0;flex:1"><div style="font-weight:800">${esc(r.course)}${r.topic?` <span class="tiny">· ${esc(r.topic)}</span>`:''}</div>
-        <div class="tiny">${r.date?esc(fmtDate(r.date)):'Day TBD'} · ${esc(r.time||'TBD')}${r.location?' · 📍 '+esc(r.location):''}${admin?' · with '+esc(r.tutor_alias||'Tutor'):''}</div></div>
+        <div class="tiny">${r.date?esc(fmtDate(r.date)):'Day TBD'} · ${esc(r.time||'TBD')}${r.location?' · 📍 '+esc(r.location):''}${payTag(r)}${admin?' · with '+esc(r.tutor_alias||'Tutor'):''}
+          ${!admin && !del && ['accepted','offered','pending'].includes(r.status) ? `<button class="mini" style="margin-left:4px" onclick="openView({type:'retime', id:'${r.id}'})">🕒 Another time</button>` : ''}</div></div>
       ${r.status==='done' ? '<span class="pill" style="background:#eef0f6;color:#5b6077">Done</span>'
         : r.status==='declined' || r.status==='cancelled' ? `<span class="pill" style="background:#fdecef;color:#c23b5e">${r.status==='declined'?'Declined':'Cancelled'}</span>`
         : admin ? `<span class="pill">${r.status==='pending'?'Asked':r.status==='offered'?'Offered':'Confirmed'}</span><button class="btn sm gray" onclick="adminRemoveSession('${r.id}')">Remove</button>`
+        : del ? removeBtn(r)
         : r.status==='offered' ? '<span class="pill">Waiting on them</span>'
         : (doneBtn(r) || '<span class="pill" style="background:#e4f6ec;color:#2e9b6a">Confirmed</span>')}
-      ${!admin && r.status==='accepted' ? cancelBtn(r.id,'session').replace('margin-left:auto;','') : !admin && r.status==='offered' ? cancelBtn(r.id,'offer').replace('margin-left:auto;','') : ''}
-    </div>${!admin && r.status!=='done' ? actsHtml(r) : ''}</div>`;
+    </div></div>`;
   c.innerHTML = `
     <button class="back" onclick="closeView()">‹ Back</button>
     <div class="row" style="margin-bottom:6px">${avatarDot(initials(alias), null, 'background:'+courseColor((rows[0]||{}).course))}
-      <div><h2 class="title" style="margin:0">${esc(alias)}</h2><div class="tiny">${up.length} upcoming · ${done.length} done</div></div></div>
+      <div style="min-width:0;flex:1"><div class="row" style="gap:8px"><h2 class="title" style="margin:0">${esc(alias)}</h2>
+        ${chatWith ? `<button class="mini" style="font-size:15px;padding:3px 9px" title="Chat with ${esc(alias)}" onclick="openView({type:'chat', id:'${chatWith.id}'})">💬${chatWith.plan?' 📝':''}</button>` : ''}</div>
+        <div class="tiny">${up.length} upcoming · ${done.length} done</div></div>
+      ${canCancel ? `<button class="btn sm ${del?'':'gray'}" onclick="S.overlay.delMode=!S.overlay.delMode;S.confirmCancel=null;render()">${del?'Done':'🗑 Delete'}</button>` : ''}</div>
     <div class="sectlabel">Sessions</div>
     ${up.length ? up.map(card).join('') : '<div class="card tiny" style="text-align:center">No upcoming sessions.</div>'}
     ${done.length ? `<div class="sectlabel">Done</div>${done.map(card).join('')}` : ''}
@@ -1678,49 +1695,80 @@ function renderCourseDetail(c, course){
   `;
 }
 
-// Tutee side: the tutors for this class, with the grade and format filters.
+// Tutee side: the tutors for this class, with filters: grade earned, the
+// tutor's grade level, pay, usual availability, a specific free time, format,
+// verified grade, online now, and a sort order.
 // The one Filter button every list uses: a count of what's active, a caret.
 const filterBtn = (key, active) => `<button class="btn ghost sm" style="margin-left:auto;white-space:nowrap" onclick="S.${key}=!S.${key};render()">⚙ Filter${active?' · '+active:''} ${S[key]?'▴':'▾'}</button>`;
+const letterRank = g => { const i=LETTERS.indexOf(g); return i<0 ? LETTERS.length : i; };
 function tutorsHtml(course){
-  let tutors = tutorsFor(course);
+  const all = tutorsFor(course);
+  let tutors = all.slice();
   const f = S.overlay.filter || {};
-  if(f.grade) tutors = tutors.filter(t=>{ const g=(t.courses.find(x=>x.course===course)||{}).grade||''; return f.grade==='A'?g.startsWith('A'):f.grade==='B'?(g.startsWith('A')||g.startsWith('B')):true; });
+  const classGrade = t => (t.courses.find(x=>x.course===course)||{}).grade||'';
+  if(f.grade==='A') tutors = tutors.filter(t=>classGrade(t).startsWith('A'));
+  if(f.grade==='B') tutors = tutors.filter(t=>classGrade(t) && !classGrade(t).startsWith('A'));
+  if(f.level) tutors = tutors.filter(t=>String(t.grade)===f.level);
+  if(f.pay) tutors = tutors.filter(t=>payChoices(t.payPref).includes(f.pay));
+  if(f.aday) tutors = tutors.filter(t=>parseAvail(t.avail).days.includes(f.aday));
+  if(f.atime) tutors = tutors.filter(t=>parseAvail(t.avail).times.includes(f.atime));
   if(f.format) tutors = tutors.filter(t=>t.format.toLowerCase().includes(f.format));
   if(f.day && f.time) tutors = tutors.filter(t=>freeAt(t.id, f.day, f.time).free);
-  const active = (f.grade?1:0) + (f.format?1:0) + (f.day&&f.time?1:0);
+  if(f.verified) tutors = tutors.filter(t=>(t.courses.find(x=>x.course===course)||{}).verified);
+  if(f.online) tutors = tutors.filter(t=>isOnline(t.seen));
+  if(f.sort==='sessions') tutors.sort((a,b)=>b.sessions-a.sessions);
+  if(f.sort==='grade') tutors.sort((a,b)=>letterRank(classGrade(a))-letterRank(classGrade(b)));
+  const active = ['grade','level','pay','aday','atime','format','verified','online'].filter(k=>f[k]).length + (f.day&&f.time?1:0);
   const openF = !!S.overlay.showFilters;
+  const chipRow = (key, opts) => `<div class="chips">${opts.map(([v,l])=>{ const on=(f[key]||'')===v; return `<button class="chip ${on?'dept':''}" style="${on?'background:'+courseColor(course):''}" onclick="setFilter('${key}','${v}')">${l}</button>`; }).join('')}</div>`;
+  const label = (txt, first) => `<div class="tiny" style="margin:${first?'0':'10px'} 0 6px">${txt}</div>`;
+  const levels = [...new Set(all.map(t=>t.grade).filter(Boolean))].sort((a,b)=>a-b);
+  const inputStyle = 'padding:8px 10px;border:1.5px solid #e5e2f0;border-radius:10px;font:inherit;font-size:13px';
   return `
     <div class="row" style="margin-top:12px">
       <div class="sectlabel" style="margin:0">${tutors.length} peer tutor${tutors.length===1?'':'s'}</div>
       <button class="btn ghost sm" style="margin-left:auto" onclick="S.overlay.showFilters=!S.overlay.showFilters;render()">⚙ Filter${active?' · '+active:''} ${openF?'▴':'▾'}</button>
     </div>
     ${openF ? `<div class="card" style="margin-top:8px;padding:10px 12px">
-      <div class="tiny" style="margin-bottom:6px">Grade earned</div>
-      <div class="chips">${[['','Any'],['B','B or higher'],['A','A only']].map(([v,l])=>`<button class="chip ${(!f.grade&&!v)||f.grade===v?'dept':''}" style="${(!f.grade&&!v)||f.grade===v?'background:'+courseColor(course):''}" onclick="setFilter('grade','${v}')">${l}</button>`).join('')}</div>
-      <div class="tiny" style="margin:10px 0 6px">Format</div>
-      <div class="chips">${[['','Any'],['virtual','Virtual'],['person','In person']].map(([v,l])=>`<button class="chip ${(!f.format&&!v)||f.format===v?'dept':''}" style="${(!f.format&&!v)||f.format===v?'background:'+courseColor(course):''}" onclick="setFilter('format','${v}')">${l}</button>`).join('')}</div>
-      <div class="tiny" style="margin:10px 0 6px">Free at a certain time</div>
+      ${label('Grade they got in '+esc(course), true)}
+      ${chipRow('grade', [['','Any'],['A','A'],['B','B or below']])}
+      ${levels.length > 1 ? label("Tutor's grade level") + chipRow('level', [['','Any'], ...levels.map(g=>[String(g),'Grade '+g])]) : ''}
+      ${label('Paid in')}
+      ${chipRow('pay', [['','Any'],['hours','Service hours'],['money','Money']])}
+      ${label('Usually free')}
+      ${chipRow('aday', [['','Any day'], ...AVAIL_DAYS.map(d=>[d,d])])}
+      <div style="height:6px"></div>
+      ${chipRow('atime', [['','Any time'], ...AVAIL_TIMES.map(x=>[x,x])])}
+      ${label('Free at a certain time')}
       <div class="row" style="gap:8px;flex-wrap:wrap">
-        <input type="date" value="${esc(f.day||'')}" min="${ymd(new Date())}" onchange="setFilter('day',this.value)" style="padding:8px 10px;border:1.5px solid #e5e2f0;border-radius:10px;font:inherit;font-size:13px">
-        <select onchange="setFilter('time',this.value)" style="padding:8px 10px;border:1.5px solid #e5e2f0;border-radius:10px;font:inherit;font-size:13px;background:#fff"><option value="">Any time</option>${TIME_SLOTS.map(x=>`<option ${f.time===x?'selected':''}>${x}</option>`).join('')}</select>
+        <input type="date" value="${esc(f.day||'')}" min="${ymd(new Date())}" onchange="setFilter('day',this.value)" style="${inputStyle}">
+        <select onchange="setFilter('time',this.value)" style="${inputStyle};background:#fff"><option value="">Any time</option>${TIME_SLOTS.map(x=>`<option ${f.time===x?'selected':''}>${x}</option>`).join('')}</select>
       </div>
-      ${active ? `<button class="btn ghost sm" style="margin-top:10px" onclick="S.overlay.filter={};render()">Clear filters</button>` : ''}
+      ${label('Format')}
+      ${chipRow('format', [['','Any'],['virtual','Virtual'],['person','In person']])}
+      ${label('Only show')}
+      <div class="chips">${[['verified','✓ Verified grade'],['online','● Online now']].map(([k,l])=>`<button class="chip ${f[k]?'dept':''}" style="${f[k]?'background:'+courseColor(course):''}" onclick="setFilter('${k}','${f[k]?'':'1'}')">${l}</button>`).join('')}</div>
+      ${label('Sort by')}
+      ${chipRow('sort', [['','Default'],['grade','Best grade'],['sessions','Most sessions']])}
+      ${active || f.sort ? `<button class="btn ghost sm" style="margin-top:10px" onclick="S.overlay.filter={};render()">Clear filters</button>` : ''}
     </div>` : ''}
     <div style="height:8px"></div>
-    ${tutors.length ? tutors.map(t=>tutorCard(t,course)).join('') : `<div class="empty"><div class="em">🔍</div>${tutorsFor(course).length ? 'No tutors match — try loosening the filters.' : 'No tutors for this class yet. Ask on the Community tab, or check back soon.'}</div>`}`;
+    ${tutors.length ? tutors.map(t=>tutorCard(t,course)).join('') : `<div class="empty"><div class="em">🔍</div>${all.length ? 'No tutors match — try loosening the filters.' : 'No tutors for this class yet. Ask on the Community tab, or check back soon.'}</div>`}`;
 }
 
 // Tutor side: the students taking this class, and a way to offer them help.
 function tuteesHtml(course){
   const me=A.user.id, canOffer = !isAdmin() && S.me.isTutor && S.tutorClasses.includes(course);
-  const students = S.roster.filter(r=>r.course===course).sort((a,b)=>a.student_alias.localeCompare(b.student_alias, undefined, {numeric:true}));
+  // Students who asked for help in a check-in this week come first.
+  const want = wantsHelp(course);
+  const students = S.roster.filter(r=>r.course===course).sort((a,b)=>(want.has(b.user_id)-want.has(a.user_id)) || a.student_alias.localeCompare(b.student_alias, undefined, {numeric:true}));
   const stateFor = sid => S.incoming.find(r=>r.student_id===sid && r.course===course && ['offered','pending','accepted'].includes(r.status));
   return `
     ${canOffer || isAdmin() ? '' : `<div class="card tiny" style="margin-top:10px">To offer help here, add ${esc(course)} to the classes you tutor first.${S.me.isTutor ? '' : ' <button class="btn ghost sm" style="margin-left:6px" onclick="openView({type:\'becomeTutor\'})">Become a tutor</button>'}</div>`}
     <div class="sectlabel">${students.length} student${students.length===1?'':'s'} taking ${esc(course)}</div>
     ${students.length ? students.map(st=>{ const r=stateFor(st.user_id); return `<div class="card row">
       ${avatarDot(initials(st.student_alias), st.last_seen_at, 'background:'+courseColor(course))}
-      <div style="min-width:0;flex:1"><div style="font-weight:800">${esc(st.student_alias)} ${seenHtml(st.last_seen_at)}</div><div class="tiny">${st.grade_level?'Grade '+st.grade_level:''}${r ? (st.grade_level?' · ':'') + (r.status==='offered' ? 'You offered to help' : r.status==='pending' ? 'They asked you for help' : 'Session booked') : ''}</div></div>
+      <div style="min-width:0;flex:1"><div style="font-weight:800">${esc(st.student_alias)} ${seenHtml(st.last_seen_at)}${want.has(st.user_id) ? wantsHelpPill : ''}</div><div class="tiny">${st.grade_level?'Grade '+st.grade_level:''}${r ? (st.grade_level?' · ':'') + (r.status==='offered' ? 'You offered to help' : r.status==='pending' ? 'They asked you for help' : 'Session booked') : ''}</div></div>
       ${r ? `<span class="pill" style="margin-left:auto;${r.status==='accepted'?'background:#e4f6ec;color:#2e9b6a':''}">${r.status==='offered'?'Offered':r.status==='pending'?'Requested':'Confirmed'}</span>`
           : canOffer ? `<span class="row" style="gap:6px;margin-left:auto;flex:0 0 auto"><button class="btn sm ghost" onclick="openView({type:'schedule', course:'${esc(course)}', student:'${st.user_id}'})">📅 Schedule</button><button class="btn sm" onclick="offerHelp('${st.user_id}','${esc(st.student_alias)}','${esc(course)}',this)">Offer help</button></span>` : ''}
     </div>`; }).join('') : `<div class="empty"><div class="em">🎓</div>Nobody has added ${esc(course)} as a class yet.</div>`}`;
@@ -1730,7 +1778,7 @@ function tuteesHtml(course){
 function offerHelp(studentId, alias, course, btn){
   if(btn){ btn.disabled=true; btn.textContent='Offering…'; }
   sbFetch('/rest/v1/sl_requests', { method:'POST', headers:{ Prefer:'return=minimal' }, body:JSON.stringify({
-      student_id:studentId, tutor_id:A.user.id, student_alias:alias, tutor_alias:A.profile.tutor_alias, course, topic:'Offer to help', note:'', time:'TBD', format:A.profile.tutor_format||'In person', status:'offered' }) })
+      student_id:studentId, tutor_id:A.user.id, student_alias:alias, tutor_alias:A.profile.tutor_alias, course, topic:'Offer to help', note:'', time:'TBD', format:A.profile.tutor_format||'In person', status:'offered', pay_type:offerPayType() }) })
     .then(loadData).then(function(){ toast('Offered to help '+alias); render(); })
     .catch(function(e){ toast(e.message); render(); });
 }
@@ -1973,6 +2021,7 @@ function tutorCard(t, course){
           ${cc.grade ? `<span class="grade ${gradeClass(cc.grade)}">${esc(course)}: ${esc(cc.grade)}</span>` : `<span class="tiny">${esc(course)}</span>`}
           ${cc.verified ? '<span class="verified">✓ Verified</span>' : ''}
           ${cc.year ? `<span class="tiny" style="margin-left:6px">Taken ${/^Grade/.test(cc.year)?'in ':''}${esc(cc.year)}</span>` : ''}
+          <span class="tiny" style="margin-left:6px">💰 ${payChoices(t.payPref).map(v=>PAY_LABELS[v]).join(' or ')}</span>
         </div>
         <div class="tiny" style="margin-top:5px">🗓️ ${esc(t.avail||'Availability not set')} · ${esc(t.format)}</div>
         ${t.bio ? `<div class="tiny" style="margin-top:2px">${esc(t.bio)}</div>` : ''}
@@ -2019,6 +2068,10 @@ function renderRequest(c){
     <div class="card">
       <div class="field"><label>Course</label>
         <select id="rq_course">${coursesTutored.map(x=>`<option ${x===course?'selected':''}>${esc(x)}</option>`).join('')}</select></div>
+      <div class="field"><label>Tutor paid in</label>
+        ${payChoices(t.payPref).length>1
+          ? `<div class="seg" id="rq_pay">${payChoices(t.payPref).map(v=>`<button data-v="${v}">${PAY_LABELS[v]}</button>`).join('')}</div>`
+          : `<div class="seg" id="rq_pay"><button class="on" data-v="${payChoices(t.payPref)[0]}" disabled style="opacity:1">${PAY_LABELS[payChoices(t.payPref)[0]]} only</button></div>`}</div>
       <div class="field"><label>How many sessions?</label>
         <div class="seg" id="rq_count">
           <button class="on" data-v="one">One session</button>
@@ -2049,6 +2102,9 @@ function renderRequest(c){
     $('rq_dayWrap').style.display = many ? 'none' : '';
     $('rq_many').style.display = many ? '' : 'none';
     checkFree(t.id);
+  });
+  c.querySelectorAll('#rq_pay button:not([disabled])').forEach(b=>b.onclick=()=>{
+    c.querySelectorAll('#rq_pay button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
   });
   c.querySelectorAll('#rq_wd button').forEach(b=>b.onclick=()=>{ b.classList.toggle('dept'); b.style.background = b.classList.contains('dept') ? 'var(--blue)' : ''; checkFree(t.id); });
   checkFree(t.id);
@@ -2234,6 +2290,8 @@ function locDetail(){
 async function submitRequest(tid){
   const t=findTutor(tid); if(!t) return;
   const course=$('rq_course').value;
+  const payType=document.querySelector('#rq_pay button.on')?.dataset.v;
+  if(!payChoices(t.payPref).includes(payType)){ toast('Choose service hours or money.'); return; }
   const topic=$('rq_topic').value.trim()||'General help';
   const note=($('rq_desc').value||'').trim();
   const date=$('rq_day').value||null;
@@ -2254,7 +2312,7 @@ async function submitRequest(tid){
     // share a created_at — that is how the tutor's side groups them.
     await sbFetch('/rest/v1/sl_requests', { method:'POST', headers:{ Prefer:'return=minimal' }, body:JSON.stringify(dates.map(d=>({
       student_id:A.user.id, tutor_id:tid, student_alias:A.profile.student_alias, tutor_alias:t.name,
-      course, topic: many ? SERIES_TOPIC : topic, note, date:d, time, minutes, format:fmt, location }))) });
+      course, topic: many ? SERIES_TOPIC : topic, note, date:d, time, minutes, format:fmt, location, pay_type:payType }))) });
     await loadData();
     closeView(); go('tutoring');
     toast(many ? 'Asked '+t.name+' for '+dates.length+' sessions 🎉' : 'Request sent to '+t.name+' 🎉');
@@ -2451,7 +2509,7 @@ async function sendSchedule(){
     await sbFetch('/rest/v1/sl_requests', { method:'POST', headers:{ Prefer:'return=minimal' }, body:JSON.stringify({
       student_id:studentId, tutor_id:A.user.id, student_alias:alias, tutor_alias:A.profile.tutor_alias,
       course:$('sc_course').value, topic:$('sc_topic').value.trim()||'Tutoring session', note:($('sc_note').value||'').trim(),
-      date, time:$('sc_time').value, minutes:slotMinutes($('sc_time').value), format:fmt, location, status:'offered' }) });
+      date, time:$('sc_time').value, minutes:slotMinutes($('sc_time').value), format:fmt, location, status:'offered', pay_type:offerPayType() }) });
     await loadData();
     closeView(); go('tutoring');
     toast('Sent to '+alias+' — booked once they accept 📅');
@@ -2563,7 +2621,7 @@ function sessionPlanHtml(r){
   return `<div class="card" style="margin-bottom:10px">
     <div class="row" style="align-items:flex-start"><div style="flex:1;min-width:0">
       <div style="font-weight:800">${esc(r.topic||'Tutoring session')}</div>
-      <div class="tiny">${esc(fmtDate(r.date))} · ${esc(r.time||'time TBD')}${r.location?' · 📍 '+esc(r.location):' · place TBD'}${r.minutes?' · '+r.minutes+' min':''}</div>
+      <div class="tiny">${esc(fmtDate(r.date))} · ${esc(r.time||'time TBD')}${r.location?' · 📍 '+esc(r.location):' · place TBD'}${r.minutes?' · '+r.minutes+' min':''}${payTag(r)}</div>
       ${r.note ? `<div class="tiny" style="margin-top:4px">“${esc(r.note)}”</div>` : ''}</div>
       <span class="pill">${status}</span></div>
     ${S.overlay.planEdit ? `<div class="field" style="margin:10px 0 0"><label>What we'll cover</label>
@@ -2668,7 +2726,7 @@ function seriesCard(g){
   const r=g[0], ids=g.map(x=>x.id).join(',');
   return `<div class="card">
     <div class="row">${avatarDot(initials(r.student_alias), S.presence && S.presence[r.id], 'background:'+courseColor(r.course))}
-      <div><div style="font-weight:800">${esc(r.student_alias)} ${seenHtml(S.presence && S.presence[r.id])}</div><div class="tiny">${esc(r.course)} · ${g.length} sessions · ${esc(r.time||'TBD')} · ${esc(r.format)}${r.location?' · 📍 '+esc(r.location):''}</div></div></div>
+      <div><div style="font-weight:800">${esc(r.student_alias)} ${seenHtml(S.presence && S.presence[r.id])}</div><div class="tiny">${esc(r.course)} · ${g.length} sessions · ${esc(r.time||'TBD')} · ${esc(r.format)}${r.location?' · 📍 '+esc(r.location):''}${payTag(r)}</div></div></div>
     ${r.note ? `<div style="font-size:13px;margin:8px 0 0;color:#555">${esc(r.note)}</div>` : ''}
     <div style="margin:8px 0 10px">${g.map(x=>`<span class="pill">${esc(fmtDate(x.date))}</span>`).join('')}</div>
     <div class="row" style="gap:8px">
@@ -2718,7 +2776,7 @@ function renderTutoring(c){
           <div class="row">${avatarDot(initials(r.student_alias), S.presence && S.presence[r.id], 'background:'+courseColor(r.course))}
             <div><div style="font-weight:800">${esc(r.student_alias)} ${seenHtml(S.presence && S.presence[r.id])}</div><div class="tiny">${esc(r.course)} · ${esc(r.topic)}</div></div></div>
           ${r.note ? `<div style="font-size:13px;margin:8px 0 0;color:#555">${esc(r.note)}</div>` : ''}
-          <div class="tiny" style="margin:8px 0 10px">🗓️ ${esc(fmtDate(r.date))} · ${esc(r.time||'TBD')} · ${esc(r.format)}${r.location?' · 📍 '+esc(r.location):''}</div>
+          <div class="tiny" style="margin:8px 0 10px">🗓️ ${esc(fmtDate(r.date))} · ${esc(r.time||'TBD')} · ${esc(r.format)}${r.location?' · 📍 '+esc(r.location):''}${payTag(r)}</div>
           <div class="row" style="gap:8px">
             <button class="btn sm gray" style="flex:1" onclick="respondRequest('${r.id}',false)">Decline</button>
             <button class="btn sm green" style="flex:1" onclick="respondRequest('${r.id}',true)">Accept</button>
@@ -2730,7 +2788,7 @@ function renderTutoring(c){
     ${offers.length ? `<div class="sectlabel">Offers to help you (${offers.length})</div>
       ${offers.map(r=>`<div class="card">
         <div class="row">${avatarDot(initials(r.tutor_alias), S.presence && S.presence[r.id], 'background:'+courseColor(r.course))}
-          <div><div style="font-weight:800">${esc(r.tutor_alias)} ${seenHtml(S.presence && S.presence[r.id])}</div><div class="tiny">offers to help with ${esc(r.course)} · ${esc(r.format)}</div></div></div>
+          <div><div style="font-weight:800">${esc(r.tutor_alias)} ${seenHtml(S.presence && S.presence[r.id])}</div><div class="tiny">offers to help with ${esc(r.course)} · ${esc(r.format)}${payTag(r)}</div></div></div>
         ${r.date ? `<div class="tiny" style="margin-top:8px">🗓️ ${esc(fmtDate(r.date))} · ${esc(r.time||'TBD')}${r.location?' · 📍 '+esc(r.location):''}</div>` : ''}
         ${r.note ? `<div style="font-size:13px;margin-top:6px;color:#555">${esc(r.note)}</div>` : ''}
         <div class="row" style="gap:8px;margin-top:10px">
@@ -2838,6 +2896,99 @@ function confirmPick(id){
 // ---- Ratings ----
 // A tutee's done sessions that haven't been rated. Optional: dismissed ones
 // are remembered on this device.
+/* -------- CHECK-INS -------- */
+// Every few days: how's it going, how has tutoring been, and which classes you
+// need help in. Asking for help puts you first on that class's list for tutors
+// for a week. Skip waits until the next round. Only administrators see moods.
+const CHECKIN_DAYS=3, CHECKIN_SKIP='sc-checkin-skip';
+const MOODS=[[1,'😣','Rough'],[2,'😕','Meh'],[3,'🙂','Good'],[4,'😄','Great']];
+const moodOf = v => MOODS.find(m=>m[0]===v) || [0,'·',''];
+function checkinDue(){
+  if(!A.profile || isAdmin() || !A.profile.onboarded_at) return false;
+  const mine=(S.checkins||[]).filter(x=>x.user_id===A.user.id);
+  let skip=0; try { skip=+localStorage.getItem(CHECKIN_SKIP)||0; } catch {}
+  const last=Math.max(new Date(A.profile.onboarded_at).getTime(), mine.length ? new Date(mine[0].created_at).getTime() : 0, skip);
+  return Date.now()-last > CHECKIN_DAYS*86400000;
+}
+const wantsHelp = course => new Set((S.helpWanted||[]).filter(h=>h.course===course && h.user_id!==A.user.id).map(h=>h.user_id));
+const wantsHelpPill = '<span class="pill" style="background:#fff4e0;color:#b4690e;margin-left:4px">🙋 Wants help</span>';
+function checkinPromptHtml(){
+  if(!checkinDue()) return '';
+  return `<div class="card row" style="border-color:var(--purple);cursor:pointer" onclick="openView({type:'checkin'})">
+    <div class="avatar" style="background:var(--purple)">👋</div>
+    <div style="flex:1;min-width:0"><div style="font-weight:800">Quick check-in</div>
+      <div class="tiny">How's it going? Need help in a class? Takes 20 seconds.</div></div>
+    <button class="btn sm ghost" onclick="event.stopPropagation(); skipCheckin()">Skip</button>
+  </div>`;
+}
+function skipCheckin(){ try { localStorage.setItem(CHECKIN_SKIP, String(Date.now())); } catch {} render(); }
+function ciToggle(course){ const a=S.overlay.ci.help, i=a.indexOf(course); if(i<0) a.push(course); else a.splice(i,1); render(); }
+function renderCheckin(c){
+  const d=S.overlay.ci = S.overlay.ci || { mood:0, tutoring:0, help:[], note:'' };
+  const since=ymd(addDays(new Date(),-14));
+  const tutored=(S.myRequests||[]).some(r=>r.status==='done' && (r.done_at||r.date||'')>=since);
+  const classes=S.myClasses||[];
+  c.innerHTML=`
+    <button class="back" onclick="closeView()">‹ Back</button>
+    <h2 class="title">Quick check-in</h2>
+    <div class="lead">Every few days. Only administrators see how you're doing. Tutors only see which classes you'd like help in.</div>
+    <div class="card">
+      <div class="field"><label>How's school going?</label>
+        <div class="seg">${MOODS.map(([v,em,l])=>`<button class="${d.mood===v?'on':''}" onclick="S.overlay.ci.mood=${v};render()">${em} ${l}</button>`).join('')}</div></div>
+      ${tutored ? `<div class="field"><label>How has tutoring been lately?</label>
+        <div class="row" style="gap:4px">${[1,2,3,4,5].map(n=>`<button style="border:none;background:none;font-size:28px;cursor:pointer;padding:2px;filter:${d.tutoring>=n?'none':'grayscale(1) opacity(.35)'}" onclick="S.overlay.ci.tutoring=${n};render()">⭐</button>`).join('')}</div></div>` : ''}
+      <div class="field"><label>Do you need help in any classes right now?</label>
+        ${classes.length ? `<div class="chips">${classes.map(course=>{ const on=d.help.includes(course); return `<button class="chip ${on?'dept':''}" style="${on?'background:'+courseColor(course):''}" onclick="ciToggle('${esc(course)}')">${on?'✓ ':''}${esc(course)}</button>`; }).join('')}</div>
+        <div class="tiny" style="margin-top:6px">${d.help.length ? 'Tutors for '+d.help.map(esc).join(', ')+' will see you at the top of their list this week.' : "Leave these empty if you're good."}</div>`
+        : `<div class="tiny">Add the classes you're taking and you can ask for help in them here.</div>`}</div>
+      <div class="field" style="margin-bottom:0"><label>Anything else? (optional)</label>
+        <textarea rows="2" maxlength="500" placeholder="What's going well, what's hard…" oninput="S.overlay.ci.note=this.value">${esc(d.note)}</textarea></div>
+    </div>
+    <div class="row" style="gap:8px;margin-top:14px">
+      <button class="btn gray" style="flex:1" onclick="skipCheckin();closeView()">Skip</button>
+      <button class="btn" style="flex:2" ${d.mood?'':'disabled'} onclick="submitCheckin(this)">Send</button>
+    </div>`;
+}
+async function submitCheckin(btn){
+  const d=S.overlay.ci; if(!d||!d.mood) return;
+  btn.disabled=true; btn.textContent='Sending…';
+  try{
+    await sbFetch('/rest/v1/sl_checkins', { method:'POST', headers:{ Prefer:'return=minimal' }, body:JSON.stringify({ user_id:A.user.id, mood:d.mood, tutoring:d.tutoring||null, help_courses:d.help, note:(d.note||'').trim()||null }) });
+    await loadData(); closeView();
+    toast(d.help.length ? 'Thanks — tutors for '+d.help.join(', ')+' will see you first this week' : 'Thanks for checking in 🙏');
+  }catch(e){ toast(/sl_checkins/.test(e.message) ? 'Check-ins are not set up yet — run sql/sl_checkins.sql.' : e.message); btn.disabled=false; btn.textContent='Send'; }
+}
+// Tutor home: students in your classes who asked for help and you're not already helping.
+function helpWantedHtml(){
+  const busy=new Set(S.incoming.filter(r=>['pending','offered','accepted'].includes(r.status)).map(r=>r.student_id+'|'+r.course));
+  const rows=(S.helpWanted||[]).filter(h=>S.tutorClasses.includes(h.course) && h.user_id!==A.user.id && !busy.has(h.user_id+'|'+h.course))
+    .sort((a,b)=>b.created_at.localeCompare(a.created_at));
+  if(!rows.length) return '';
+  const alias = h => ((S.roster||[]).find(r=>r.user_id===h.user_id && r.course===h.course) || (S.people||[]).find(p=>p.user_id===h.user_id) || {}).student_alias || 'A student';
+  return `<div class="sectlabel">🙋 Asking for help in your classes (${rows.length})</div>
+    <div class="card">${rows.slice(0,6).map(h=>`<div class="listrow" style="cursor:pointer;padding-left:8px" onclick="openView({type:'course',course:'${esc(h.course)}'})">
+      <b>${esc(alias(h))}</b> <span class="tiny">· ${esc(h.course)} · ${esc(daysAgo(h.created_at))}</span> <span style="margin-left:auto;color:var(--muted)">›</span></div>`).join('')}
+      ${rows.length>6 ? `<div class="tiny" style="margin-top:6px">…and ${rows.length-6} more. Open a class to see everyone.</div>` : ''}</div>`;
+}
+// Administrators: the last week of check-ins, rough ones first.
+function adminCheckinsHtml(){
+  const week=(S.checkins||[]).filter(x=>Date.now()-new Date(x.created_at).getTime() < 7*86400000);
+  if(!week.length) return '';
+  const name = uid => ((S.people||[]).find(p=>p.user_id===uid)||{}).student_alias || 'A student';
+  const counts=MOODS.map(([v,em])=>em+' '+week.filter(x=>x.mood===v).length).join(' · ');
+  const helpN=week.filter(x=>(x.help_courses||[]).length).length;
+  const flagged=week.filter(x=>x.mood<=2 || x.note || (x.tutoring && x.tutoring<=2)).sort((a,b)=>a.mood-b.mood || b.created_at.localeCompare(a.created_at)).slice(0,8);
+  return `<div class="sectlabel">Check-ins this week</div>
+    <div class="card">
+      <div style="font-weight:800">${week.length} check-in${week.length===1?'':'s'} · ${counts}</div>
+      <div class="tiny" style="margin-top:2px">${helpN} asked for help in a class${week.some(x=>x.tutoring) ? ' · tutoring rated '+fmtAvg(week.filter(x=>x.tutoring).map(x=>x.tutoring))+' ⭐ on average' : ''}</div>
+      ${flagged.map(x=>`<div class="listrow" style="padding-left:8px;align-items:flex-start"><span>${moodOf(x.mood)[1]}</span>
+        <div style="min-width:0"><b>${esc(name(x.user_id))}</b> <span class="tiny">· ${esc(daysAgo(x.created_at))}${x.tutoring?' · tutoring '+x.tutoring+'⭐':''}${(x.help_courses||[]).length?' · help: '+x.help_courses.map(esc).join(', '):''}</span>
+        ${x.note ? `<div class="tiny" style="margin-top:2px">“${esc(x.note)}”</div>` : ''}</div></div>`).join('')}
+    </div>`;
+}
+const daysAgo = ts => { const d=Math.floor((new Date(ymd(new Date())) - new Date(ymd(new Date(ts))))/86400000); return d<=0 ? 'today' : d===1 ? 'yesterday' : d+' days ago'; };
+const fmtAvg = a => a.length ? (a.reduce((s,v)=>s+v,0)/a.length).toFixed(1) : '–';
 const RATED_SKIP='sc-rate-skip', RATE_OFF='sc-rate-off';
 function skippedRatings(){ try { return JSON.parse(localStorage.getItem(RATED_SKIP)||'[]'); } catch { return []; } }
 const ratingPromptsOff = () => { try { return localStorage.getItem(RATE_OFF)==='1'; } catch { return false; } };
@@ -2928,7 +3079,6 @@ function renderCommunity(c){
   const tutorSide = S.mode==='tutor';
   const withPosts = (S.posts||[]).map(p=>p.course);
   const mine = isAdmin() ? ALL_COURSES.filter(x => withPosts.includes(x)) : ALL_COURSES.filter(x => S[classKey()].includes(x));
-  const others = ALL_COURSES.filter(x => !mine.includes(x) && withPosts.includes(x));
   const row = course => {
     const posts=postsFor(course), n=tutorsFor(course).length;
     const latest = (S.posts||[]).filter(p=>p.course===course).sort((a,b)=>b.created_at.localeCompare(a.created_at))[0];
@@ -2944,7 +3094,6 @@ function renderCommunity(c){
     <div class="lead">${isAdmin() ? 'Every class board with a conversation. Read along, answer, or remove anything that should not be there.' : tutorSide ? 'The boards for the classes you tutor. Answer questions, spot who needs help.' : 'The boards for the classes you take. Ask a question — someone in your class can help.'}</div>
     ${mine.length ? mine.map(row).join('') : isAdmin() ? `<div class="empty"><div class="em">💬</div>Nothing posted anywhere yet.</div>` : `<div class="empty"><div class="em">💬</div>${tutorSide ? 'No tutoring classes yet. Add the classes you tutor and their boards show up here.' : 'No classes yet. Add the classes you are taking and their boards show up here.'}<div style="margin-top:12px"><button class="btn sm" onclick="S.tab='classes'; openView({type:'addClasses'})">＋ Add classes</button></div></div>`}
     ${mine.length && !isAdmin() ? `<button class="card addcard" style="width:100%;min-height:56px;margin-top:10px" onclick="S.tab='classes'; openView({type:'addClasses'})">＋ Add a class to join its board</button>` : ''}
-    ${others.length ? `<div class="sectlabel">${tutorSide ? 'Other classes with conversations' : 'Other classes with conversations'}</div>${others.map(row).join('')}` : ''}
   `;
 }
 function renderBoard(c){
@@ -2993,6 +3142,16 @@ function deletePost(id){
 }
 
 /* -------- PROFILE -------- */
+// The line students see on your tutor card, editable from Profile.
+async function saveBio(){
+  const bio=(($('bio_in')||{}).value ?? S.bioDraft ?? '').trim().slice(0,140);
+  const btn=$('bio_save'); if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
+  try{
+    await sbFetch('/rest/v1/sl_profiles?id=eq.'+A.user.id, { method:'PATCH', headers:{ Prefer:'return=minimal' }, body:JSON.stringify({ tutor_bio:bio }) });
+    A.profile.tutor_bio=bio; S.bioDraft=null;
+    toast(bio ? 'Saved — students will see it on your card' : 'Removed'); render();
+  }catch(e){ toast(e.message); if(btn){ btn.disabled=false; btn.textContent='Save'; } }
+}
 function renderProfile(c){
   const me=S.me;
   if(isAdmin()){
@@ -3031,6 +3190,13 @@ function renderProfile(c){
         <button class="btn ghost sm" style="width:100%;margin-top:10px" onclick="openView({type:'becomeTutor'})">Edit tutoring classes</button>
       </div>
       <div class="tiny" style="margin:12px 2px">🗓️ Available: ${esc(me.avail||'not set')}</div>
+      <div class="sectlabel">About you</div>
+      <div class="card">
+        <textarea id="bio_in" rows="2" maxlength="140" style="width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid #e5e2f0;border-radius:10px;font:inherit;font-size:14px;resize:vertical"
+          placeholder="e.g. Math clicked for me late, so I get where it's confusing." oninput="S.bioDraft=this.value">${esc(S.bioDraft ?? (A.profile.tutor_bio||''))}</textarea>
+        <div class="row" style="margin-top:8px"><div class="tiny">Students see this on your tutor card when they look for help. Up to 140 characters.</div>
+          <button class="btn sm" id="bio_save" style="margin-left:auto" onclick="saveBio()">Save</button></div>
+      </div>
     ` : `
       <div class="card" style="text-align:center;margin-top:12px">
         <div style="font-size:36px">✋</div>
@@ -3061,6 +3227,16 @@ function renderProfile(c){
 // classes taken (with the grade earned), and whether they want to tutor.
 // Classes taken are the only ones a person may tutor.
 const LETTERS=['A+','A','A-','B+','B','B-','C+','C','C-','D+','D','D-'];
+// How a tutor wants to be paid: service hours, money, or both. A student
+// requesting help picks from what that tutor accepts. Tutors who signed up
+// before this was asked count as service hours, the only option there was.
+const PAY_LABELS = { hours:'Service hours', money:'Money', both:'Both' };
+const payPrefOf = p => PAY_LABELS[p] ? p : 'hours';
+const payChoices = p => payPrefOf(p)==='both' ? ['hours','money'] : [payPrefOf(p)];
+// An offer from the tutor carries their pay only when there's just one choice.
+const offerPayType = () => { const c=payChoices(A.profile && A.profile.tutor_pay_pref); return c.length===1 ? c[0] : null; };
+const payPrefHtml = (cur, setter) => `<div class="seg">${Object.entries(PAY_LABELS).map(([v,l])=>`<button class="${cur===v?'on':''}" onclick="${setter}='${v}';render()">${l}</button>`).join('')}</div>`;
+const payTag = r => r.pay_type && PAY_LABELS[r.pay_type] ? ' · 💰 '+PAY_LABELS[r.pay_type] : '';
 function setupState(){
   if(S.setup) return S.setup;
   const taken={}; (S.taken||[]).forEach(g=>{ taken[g.course]={ grade:g.grade||'A', year:g.year||defaultTaken() }; });
@@ -3068,7 +3244,8 @@ function setupState(){
   S.setup = { step: hasGrade() ? 1 : 2, grade: hasGrade() ? (S.me.grade||10) : null, taking:S.myClasses.slice(), taken,
     use: S.me.isTutor ? (S.myClasses.length ? 'both' : 'tutor') : 'help',
     tutorPick: S.tutorClasses.slice(), days:parsed.days, times:parsed.times,
-    format:(A.profile&&A.profile.tutor_format)||'In person', bio:(A.profile&&A.profile.tutor_bio)||'' };
+    format:(A.profile&&A.profile.tutor_format)||'In person', bio:(A.profile&&A.profile.tutor_bio)||'',
+    payPref:(A.profile&&A.profile.tutor_pay_pref)||null };
   return S.setup;
 }
 function renderSetup(c){
@@ -3136,6 +3313,9 @@ function renderSetup(c){
         <div class="chips">${AVAIL_TIMES.map(x=>`<button class="chip ${st.times.includes(x)?'dept':''}" style="${st.times.includes(x)?'background:var(--purple)':''}" onclick="setupPick('times','${x}')">${st.times.includes(x)?'✓ ':''}${x}</button>`).join('')}</div>
         <div class="sectlabel">Format</div>
         <div class="seg">${['In person','Virtual','In person + Virtual'].map(f=>`<button class="${st.format===f?'on':''}" onclick="S.setup.format='${f}';render()">${f}</button>`).join('')}</div>
+        <div class="sectlabel">How would you like to be paid?</div>
+        ${payPrefHtml(st.payPref, 'S.setup.payPref')}
+        <div class="tiny" style="margin-top:6px">Students see this when they request you. If you pick both, they choose.</div>
         <div class="field" style="margin-top:12px"><label>A line about you (optional)</label><input id="su_bio" value="${esc(st.bio)}" maxlength="140" placeholder="e.g. Math clicked for me late, so I get where it's confusing." oninput="S.setup.bio=this.value"></div>
       </div>
       ${nav(6, 'Finish', 'finishSetup(this)', false)}`;
@@ -3171,9 +3351,10 @@ async function finishSetup(btn){
   const avail=availText(st);
   if(wantsTutor && !picks.length){ A.setupMsg='Pick at least one class to tutor, or choose Get help.'; return render(); }
   if(wantsTutor && !avail){ A.setupMsg='Pick at least one day and one time you can help.'; return render(); }
+  if(wantsTutor && !st.payPref){ A.setupMsg='Pick how you would like to be paid: service hours, money, or both.'; return render(); }
   A.setupMsg=''; if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
   try{
-    await sbFetch('/rest/v1/sl_profiles?id=eq.'+me, { method:'PATCH', headers:{ Prefer:'return=minimal' }, body:JSON.stringify({ ...(hasGrade() ? { grade_level:st.grade } : { grade_level:null }), onboarded_at:new Date().toISOString(), ...(wantsTutor ? { tutor_bio:st.bio, tutor_format:st.format } : {}) }) });
+    await sbFetch('/rest/v1/sl_profiles?id=eq.'+me, { method:'PATCH', headers:{ Prefer:'return=minimal' }, body:JSON.stringify({ ...(hasGrade() ? { grade_level:st.grade } : { grade_level:null }), onboarded_at:new Date().toISOString(), ...(wantsTutor ? { tutor_bio:st.bio, tutor_format:st.format, tutor_pay_pref:st.payPref } : {}) }) });
     // Classes now.
     await sbFetch('/rest/v1/sl_student_classes?user_id=eq.'+me, { method:'DELETE', headers:{ Prefer:'return=minimal' } });
     if(st.taking.length) await sbFetch('/rest/v1/sl_student_classes', { method:'POST', headers:{ Prefer:'return=minimal' }, body:JSON.stringify(st.taking.map(course=>({ user_id:me, course }))) });
@@ -3206,7 +3387,7 @@ function renderBecomeTutor(c){
   if(!S.overlay.draft){
     const courses={}; S.me.tutorCourses.forEach(tc=>{ const g=(S.taken||[]).find(x=>x.course===tc.course); courses[tc.course]={ grade:(g&&g.grade)||tc.grade||'A', year:(g&&g.year)||tc.year||defaultTaken() }; });
     const parsed = parseAvail(S.me.avail||'');
-    S.overlay.draft = { courses, days:parsed.days, times:parsed.times, bio:(A.profile&&A.profile.tutor_bio)||'', format:(A.profile&&A.profile.tutor_format)||'In person' };
+    S.overlay.draft = { courses, days:parsed.days, times:parsed.times, bio:(A.profile&&A.profile.tutor_bio)||'', format:(A.profile&&A.profile.tutor_format)||'In person', payPref:(A.profile&&A.profile.tutor_pay_pref)||null };
   }
   const d=S.overlay.draft, step=S.overlay.step;
   const GRADES=LETTERS;
@@ -3250,6 +3431,9 @@ function renderBecomeTutor(c){
           <div class="tiny" style="margin-top:6px">${availText(d) || 'Pick at least one day and one time.'}</div></div>
         <div class="field"><label>Format</label>
           <div class="seg">${['In person','Virtual','In person + Virtual'].map(f=>`<button class="${d.format===f?'on':''}" onclick="S.overlay.draft.format='${f}';render()">${f}</button>`).join('')}</div></div>
+        <div class="field"><label>How would you like to be paid?</label>
+          ${payPrefHtml(d.payPref, 'S.overlay.draft.payPref')}
+          <div class="tiny" style="margin-top:6px">Students see this when they request you. If you pick both, they choose.</div></div>
         <div class="field" style="margin:0"><label>A line about you (optional)</label>
           <input id="bio" value="${esc(d.bio)}" maxlength="140" placeholder="e.g. Math clicked for me late, so I get where you're stuck." oninput="S.overlay.draft.bio=this.value"></div>
       </div>
@@ -3327,11 +3511,12 @@ async function finishTutor(){
   const d=S.overlay.draft, me=A.user.id;
   const avail=availText(d);
   if(!avail){ toast('Pick at least one day and one time you can help.'); return; }
+  if(!d.payPref){ toast('Pick how you would like to be paid.'); return; }
   const bio=$('bio')?$('bio').value.trim():d.bio;
   const btn=$('ft_btn'); if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
   try{
     await ensureTutorAlias();
-    await sbFetch('/rest/v1/sl_profiles?id=eq.'+me, { method:'PATCH', headers:{ Prefer:'return=minimal' }, body:JSON.stringify({ tutor_bio:bio, tutor_format:d.format }) });
+    await sbFetch('/rest/v1/sl_profiles?id=eq.'+me, { method:'PATCH', headers:{ Prefer:'return=minimal' }, body:JSON.stringify({ tutor_bio:bio, tutor_format:d.format, tutor_pay_pref:d.payPref }) });
     await sbFetch('/rest/v1/sl_tutor_courses?user_id=eq.'+me, { method:'DELETE', headers:{ Prefer:'return=minimal' } });
     const rows=Object.entries(d.courses).map(([course,v])=>({ user_id:me, course, grade:v.grade, year:v.year, availability:avail }));
     if(rows.length) await sbFetch('/rest/v1/sl_tutor_courses', { method:'POST', headers:{ Prefer:'return=minimal' }, body:JSON.stringify(rows) });
@@ -3818,6 +4003,7 @@ function renderOverlay(c){
   if(o.type==='adminDay') return renderAdminDay(c);
   if(o.type==='pickSlot') return renderPickSlot(c);
   if(o.type==='rate') return renderRate(c);
+  if(o.type==='checkin') return renderCheckin(c);
   if(o.type==='groupChat') return renderGroupChat(c);
   if(o.type==='member') return renderMemberDetail(c);
   if(o.type==='studentSessions') return renderStudentSessions(c);
@@ -4247,7 +4433,7 @@ async function loadData(){
   if(!A.user) return;
   const me = A.user.id;
   if(dataLoaded) { try { await loadProfile(); } catch(e) {} }   // background refreshes pick up profile changes too
-  let [classes, tcourses, reqs, events, tutors, posts, myGrades, pendingGrades, materials, roster, presence, people, allReqs, inbox, settings, groups, groupMembers, ratings, reports, allGrades, avail] = await Promise.all([
+  let [classes, tcourses, reqs, events, tutors, posts, myGrades, pendingGrades, materials, roster, presence, people, allReqs, inbox, settings, groups, groupMembers, ratings, reports, allGrades, avail, checkins, helpWanted] = await Promise.all([
     sbFetch('/rest/v1/sl_student_classes?select=course&user_id=eq.'+me+'&order=created_at'),
     sbFetch('/rest/v1/sl_tutor_courses?select=course,grade,year,availability&user_id=eq.'+me+'&order=created_at'),
     sbFetch('/rest/v1/sl_requests?select=*&or=(student_id.eq.'+me+',tutor_id.eq.'+me+')&order=created_at.desc'),
@@ -4269,6 +4455,9 @@ async function loadData(){
     isStaff() ? sbFetch('/rest/v1/sl_reports?select=*&status=eq.open&order=created_at.desc').catch(()=>[]) : Promise.resolve([]),
     isStaff() ? sbFetch('/rest/v1/sl_grades?select=*').catch(()=>[]) : Promise.resolve([]),
     sbFetch('/rest/v1/sl_availability?select=*&order=recurring.desc,weekday,date,start_min'),
+    // Your own check-ins (to know when to ask again); administrators read the last two weeks.
+    sbFetch('/rest/v1/sl_checkins?select=*'+(isAdmin() ? '&created_at=gte.'+encodeURIComponent(new Date(Date.now()-14*86400000).toISOString()) : '&user_id=eq.'+me)+'&order=created_at.desc&limit=300').catch(()=>[]),
+    sbFetch('/rest/v1/sl_help_wanted?select=*').catch(()=>[]),
   ]);
   const fixC = rows => (rows||[]).map(r => r && r.course ? { ...r, course: canon(r.course) } : r);
   classes=fixC(classes); tcourses=fixC(tcourses); reqs=fixC(reqs); events=fixC(events); tutors=fixC(tutors); posts=fixC(posts); myGrades=fixC(myGrades); materials=fixC(materials); roster=fixC(roster); allReqs=fixC(allReqs);
@@ -4296,6 +4485,8 @@ async function loadData(){
   S.groups = fixC(groups||[]);
   S.groupMembers = groupMembers||[];
   S.ratings = fixC(ratings||[]);
+  S.checkins = fixC(checkins||[]).map(x=>({ ...x, help_courses:(x.help_courses||[]).map(canon) }));
+  S.helpWanted = fixC(helpWanted||[]);
   S.reports = reports||[];
   S.allGrades = fixC(allGrades||[]);
   S.tutors = buildTutors(tutors||[], me);
@@ -4312,7 +4503,7 @@ function buildTutors(rows, me){
   const by = {};
   rows.forEach(function(r){
     if(r.user_id===me) return;
-    const t = by[r.user_id] || (by[r.user_id] = { id:r.user_id, name:r.tutor_alias, grade:r.grade_level, bio:r.tutor_bio||'', format:r.tutor_format||'In person', seen:r.last_seen_at,
+    const t = by[r.user_id] || (by[r.user_id] = { id:r.user_id, name:r.tutor_alias, grade:r.grade_level, bio:r.tutor_bio||'', format:r.tutor_format||'In person', payPref:payPrefOf(r.tutor_pay_pref), seen:r.last_seen_at,
       avail:'', sessions:Number(r.sessions_done)||0, courses:[], color:TUTOR_COLORS[hashStr(r.user_id)%TUTOR_COLORS.length] });
     t.courses.push({ course:r.course, grade:r.grade||'', year:r.year||'', verified:!!r.verified });
     if(r.availability && !t.avail) t.avail = r.availability;
