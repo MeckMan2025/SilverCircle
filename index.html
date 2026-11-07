@@ -585,7 +585,7 @@ function renderHead(){
     <button class="menu" onclick="toggleSide(true)" aria-label="Open navigation">☰</button>
     <h1>${esc(title)}</h1>
     <div class="right">${esc(currentAlias())} ${roleBadge(A.profile.role)}<br><span class="seen on">● Online</span>${hasGrade() ? ' · Grade '+S.me.grade : ''}</div>
-    ${bellHtml()}${issueBtnHtml()}`;
+    ${notebookBtnHtml()}${bellHtml()}${issueBtnHtml()}`;
 }
 // The ! in the top right, on every screen. Anyone can tell the board and
 // administrators something is broken; staff see the open ones here and mark
@@ -916,7 +916,6 @@ function renderAdminHome(c){
     ${stale.length ? `<div class="card row" style="cursor:pointer" onclick="S.adminReqFilter='pending';go('admin-requests')"><div class="avatar" style="background:var(--blue-d)">⏳</div>
       <div style="flex:1"><div style="font-weight:800">${stale.length} request${stale.length===1?'':'s'} waiting more than two days</div><div class="tiny">Nobody has answered yet. Worth a nudge.</div></div><div style="color:var(--muted)">›</div></div>` : ''}
     ${reportsHtml()}
-    ${adminCheckinsHtml()}
     <div class="sectlabel">This week</div>
     ${weekPulseHtml()}
     <div class="sectlabel">This week's tutors <span class="tiny" style="font-weight:600;text-transform:none;letter-spacing:0">· how many have said they're free each day, and sessions booked</span></div>
@@ -2899,7 +2898,8 @@ function confirmPick(id){
 /* -------- CHECK-INS -------- */
 // Every few days: how's it going, how has tutoring been, and which classes you
 // need help in. Asking for help puts you first on that class's list for tutors
-// for a week. Skip waits until the next round. Only administrators see moods.
+// for a week. Skip waits until the next round. Only the board and administrators
+// see moods, in the 📓 notebook next to the bell.
 const CHECKIN_DAYS=3, CHECKIN_SKIP='sc-checkin-skip';
 const MOODS=[[1,'😣','Rough'],[2,'😕','Meh'],[3,'🙂','Good'],[4,'😄','Great']];
 const moodOf = v => MOODS.find(m=>m[0]===v) || [0,'·',''];
@@ -2970,22 +2970,42 @@ function helpWantedHtml(){
       <b>${esc(alias(h))}</b> <span class="tiny">· ${esc(h.course)} · ${esc(daysAgo(h.created_at))}</span> <span style="margin-left:auto;color:var(--muted)">›</span></div>`).join('')}
       ${rows.length>6 ? `<div class="tiny" style="margin-top:6px">…and ${rows.length-6} more. Open a class to see everyone.</div>` : ''}</div>`;
 }
-// Administrators: the last week of check-ins, rough ones first.
-function adminCheckinsHtml(){
-  const week=(S.checkins||[]).filter(x=>Date.now()-new Date(x.created_at).getTime() < 7*86400000);
-  if(!week.length) return '';
+// The board and administrators: the 📓 next to the bell opens the last two
+// weeks of check-ins. Its badge counts rough ones since they last looked.
+const CHECKINS_SEEN='sc-checkins-seen';
+const flaggedCheckin = x => x.mood<=2 || !!x.note || (x.tutoring && x.tutoring<=2);
+function checkinsSeenAt(){ try { return +localStorage.getItem(CHECKINS_SEEN)||0; } catch { return 0; } }
+function notebookBtnHtml(){
+  if(!isStaff()) return '';
+  const seen=checkinsSeenAt(), n=(S.checkins||[]).filter(x=>x.user_id!==A.user.id && flaggedCheckin(x) && new Date(x.created_at).getTime()>seen).length;
+  return `<button class="bell" style="margin-right:6px" onclick="S.notifOpen=false;S.issueOpen=false;openView({type:'checkins'})" aria-label="Check-ins notebook" title="Check-ins">📓${n?`<span class="n">${n>9?'9+':n}</span>`:''}</button>`;
+}
+function renderCheckinsBook(c){
+  try { localStorage.setItem(CHECKINS_SEEN, String(Date.now())); } catch {}
+  const all=(S.checkins||[]).filter(x=>x.user_id!==A.user.id);
+  const week=all.filter(x=>Date.now()-new Date(x.created_at).getTime() < 7*86400000);
   const name = uid => ((S.people||[]).find(p=>p.user_id===uid)||{}).student_alias || 'A student';
-  const counts=MOODS.map(([v,em])=>em+' '+week.filter(x=>x.mood===v).length).join(' · ');
-  const helpN=week.filter(x=>(x.help_courses||[]).length).length;
-  const flagged=week.filter(x=>x.mood<=2 || x.note || (x.tutoring && x.tutoring<=2)).sort((a,b)=>a.mood-b.mood || b.created_at.localeCompare(a.created_at)).slice(0,8);
-  return `<div class="sectlabel">Check-ins this week</div>
-    <div class="card">
-      <div style="font-weight:800">${week.length} check-in${week.length===1?'':'s'} · ${counts}</div>
-      <div class="tiny" style="margin-top:2px">${helpN} asked for help in a class${week.some(x=>x.tutoring) ? ' · tutoring rated '+fmtAvg(week.filter(x=>x.tutoring).map(x=>x.tutoring))+' ⭐ on average' : ''}</div>
-      ${flagged.map(x=>`<div class="listrow" style="padding-left:8px;align-items:flex-start"><span>${moodOf(x.mood)[1]}</span>
-        <div style="min-width:0"><b>${esc(name(x.user_id))}</b> <span class="tiny">· ${esc(daysAgo(x.created_at))}${x.tutoring?' · tutoring '+x.tutoring+'⭐':''}${(x.help_courses||[]).length?' · help: '+x.help_courses.map(esc).join(', '):''}</span>
-        ${x.note ? `<div class="tiny" style="margin-top:2px">“${esc(x.note)}”</div>` : ''}</div></div>`).join('')}
-    </div>`;
+  const rated=week.filter(x=>x.tutoring).map(x=>x.tutoring);
+  const row = x => `<div class="listrow" style="cursor:default;align-items:flex-start"><span style="font-size:20px">${moodOf(x.mood)[1]}</span>
+    <div style="min-width:0;flex:1"><b>${esc(name(x.user_id))}</b> <span class="tiny">· ${esc(moodOf(x.mood)[2])} · ${esc(daysAgo(x.created_at))}${x.tutoring?' · tutoring '+x.tutoring+'⭐':''}</span>
+    ${(x.help_courses||[]).length ? `<div class="tiny" style="margin-top:2px">🙋 Help with ${x.help_courses.map(esc).join(', ')}</div>` : ''}
+    ${x.note ? `<div class="tiny" style="margin-top:2px">“${esc(x.note)}”</div>` : ''}</div></div>`;
+  const flagged=all.filter(flaggedCheckin).sort((a,b)=>a.mood-b.mood || b.created_at.localeCompare(a.created_at));
+  const rest=all.filter(x=>!flaggedCheckin(x));
+  c.innerHTML=`
+    <button class="back" onclick="closeView()">‹ Back</button>
+    <h2 class="title">📓 Check-ins</h2>
+    <div class="lead">How students say things are going, from the last two weeks. Only the board and administrators see this.</div>
+    <div class="statgrid">
+      <div class="stat"><div class="n" style="color:var(--purple)">${week.length}</div><div class="l">this week</div></div>
+      <div class="stat"><div class="n" style="color:var(--blue-d)">${week.filter(x=>(x.help_courses||[]).length).length}</div><div class="l">asked for help</div></div>
+      <div class="stat"><div class="n" style="color:var(--green)">${fmtAvg(rated)}</div><div class="l">tutoring ⭐</div></div>
+    </div>
+    ${week.length ? `<div class="tiny" style="margin:-4px 0 10px">This week: ${MOODS.map(([v,em,l])=>em+' '+l+' '+week.filter(x=>x.mood===v).length).join(' · ')}</div>` : ''}
+    ${!all.length ? '<div class="empty"><div class="em">📓</div>No check-ins yet. Students get one every few days on their Home screen.</div>' : ''}
+    ${flagged.length ? `<div class="sectlabel">Worth a look · rough days, low tutoring ratings, and notes</div><div class="card">${flagged.map(row).join('')}</div>` : ''}
+    ${rest.length ? `<div class="sectlabel">Everyone else</div><div class="card">${rest.map(row).join('')}</div>` : ''}`;
+  renderHead();   // clears the 📓 badge
 }
 const daysAgo = ts => { const d=Math.floor((new Date(ymd(new Date())) - new Date(ymd(new Date(ts))))/86400000); return d<=0 ? 'today' : d===1 ? 'yesterday' : d+' days ago'; };
 const fmtAvg = a => a.length ? (a.reduce((s,v)=>s+v,0)/a.length).toFixed(1) : '–';
@@ -3079,6 +3099,9 @@ function renderCommunity(c){
   const tutorSide = S.mode==='tutor';
   const withPosts = (S.posts||[]).map(p=>p.course);
   const mine = isAdmin() ? ALL_COURSES.filter(x => withPosts.includes(x)) : ALL_COURSES.filter(x => S[classKey()].includes(x));
+  // Board members also see the other class boards that have a conversation.
+  // Those are class boards only, never anyone's one-on-one chats.
+  const others = isStaff() ? ALL_COURSES.filter(x => !mine.includes(x) && withPosts.includes(x)) : [];
   const row = course => {
     const posts=postsFor(course), n=tutorsFor(course).length;
     const latest = (S.posts||[]).filter(p=>p.course===course).sort((a,b)=>b.created_at.localeCompare(a.created_at))[0];
@@ -3094,6 +3117,7 @@ function renderCommunity(c){
     <div class="lead">${isAdmin() ? 'Every class board with a conversation. Read along, answer, or remove anything that should not be there.' : tutorSide ? 'The boards for the classes you tutor. Answer questions, spot who needs help.' : 'The boards for the classes you take. Ask a question — someone in your class can help.'}</div>
     ${mine.length ? mine.map(row).join('') : isAdmin() ? `<div class="empty"><div class="em">💬</div>Nothing posted anywhere yet.</div>` : `<div class="empty"><div class="em">💬</div>${tutorSide ? 'No tutoring classes yet. Add the classes you tutor and their boards show up here.' : 'No classes yet. Add the classes you are taking and their boards show up here.'}<div style="margin-top:12px"><button class="btn sm" onclick="S.tab='classes'; openView({type:'addClasses'})">＋ Add classes</button></div></div>`}
     ${mine.length && !isAdmin() ? `<button class="card addcard" style="width:100%;min-height:56px;margin-top:10px" onclick="S.tab='classes'; openView({type:'addClasses'})">＋ Add a class to join its board</button>` : ''}
+    ${others.length ? `<div class="sectlabel">Other classes with conversations</div>${others.map(row).join('')}` : ''}
   `;
 }
 function renderBoard(c){
@@ -4004,6 +4028,7 @@ function renderOverlay(c){
   if(o.type==='pickSlot') return renderPickSlot(c);
   if(o.type==='rate') return renderRate(c);
   if(o.type==='checkin') return renderCheckin(c);
+  if(o.type==='checkins') return renderCheckinsBook(c);
   if(o.type==='groupChat') return renderGroupChat(c);
   if(o.type==='member') return renderMemberDetail(c);
   if(o.type==='studentSessions') return renderStudentSessions(c);
@@ -4456,7 +4481,7 @@ async function loadData(){
     isStaff() ? sbFetch('/rest/v1/sl_grades?select=*').catch(()=>[]) : Promise.resolve([]),
     sbFetch('/rest/v1/sl_availability?select=*&order=recurring.desc,weekday,date,start_min'),
     // Your own check-ins (to know when to ask again); administrators read the last two weeks.
-    sbFetch('/rest/v1/sl_checkins?select=*'+(isAdmin() ? '&created_at=gte.'+encodeURIComponent(new Date(Date.now()-14*86400000).toISOString()) : '&user_id=eq.'+me)+'&order=created_at.desc&limit=300').catch(()=>[]),
+    sbFetch('/rest/v1/sl_checkins?select=*'+(isStaff() ? '&created_at=gte.'+encodeURIComponent(new Date(Date.now()-14*86400000).toISOString()) : '&user_id=eq.'+me)+'&order=created_at.desc&limit=300').catch(()=>[]),
     sbFetch('/rest/v1/sl_help_wanted?select=*').catch(()=>[]),
   ]);
   const fixC = rows => (rows||[]).map(r => r && r.course ? { ...r, course: canon(r.course) } : r);
