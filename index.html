@@ -1414,19 +1414,31 @@ function renderClasses(c){
     return;
   }
   if(S.mode==='tutor'){
+    // Every subject at once, stacked: a heading, then its classes as cards.
     // Only the classes somebody is actually taking: an empty class is noise.
     const mine=S.tutorClasses.filter(x=>S.roster.some(r=>r.course===x));
     const quiet=S.tutorClasses.length-mine.length;
     const depts=DEPTS.filter(d=>d.courses.some(x=>mine.includes(x)));
-    const sel=depts.find(d=>d.name===S.tutorDept) || null;
+    const today=ymd(new Date());
+    const card = course => {
+      const n=S.roster.filter(r=>r.course===course).length;
+      const next=calItems().filter(e=>e.course===course && e.date>=today).sort(byWhen)[0];
+      return `<div class="card classcard" style="--c:${courseColor(course)};margin:0" onclick="openClass('${esc(course)}')">
+        <div style="font-weight:800">${courseEmoji(course)} ${esc(course)}</div>
+        <div class="tiny" style="margin-top:2px">${n} student${n===1?'':'s'}</div>
+        <div class="tiny" style="margin-top:6px;color:${next?'var(--ink)':'var(--muted)'}">${next ? '📅 '+esc(fmtDate(next.date))+(next.time?' · '+esc(next.time):'')+' · '+esc(next.title) : 'Nothing booked'}</div>
+      </div>`; };
+    const section = d => { const cs=d.courses.filter(x=>mine.includes(x));
+      return `<div style="display:flex;align-items:center;gap:10px;margin:18px 2px 10px">
+          <span style="font-size:13px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${d.color}">${d.emoji} ${esc(d.name)}</span>
+          <span style="flex:1;height:2px;border-radius:2px;background:${d.color};opacity:.35"></span></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">${cs.map(card).join('')}</div>`; };
     c.innerHTML = `
       <h2 class="title">Classes I tutor</h2>
-      <div class="lead">${mine.length ? 'By subject. Open one for its classes, then a class for the students taking it.' : S.tutorClasses.length ? 'None of your classes has a student in it yet. They show up here as soon as someone adds one.' : 'Add the classes you tutor and they show up here by subject.'}</div>
-      ${depts.length ? `<div class="sectlabel">Subjects</div><div class="chips" style="gap:8px;margin:0 0 16px">${depts.map(d=>{ const n=d.courses.filter(x=>mine.includes(x)).length, students=d.courses.filter(x=>mine.includes(x)).reduce((a,x)=>a+S.roster.filter(r=>r.course===x).length,0);
-        return `<button class="chip" style="padding:10px 16px;font-size:14px;border-radius:999px;border:2px solid ${d.color};${sel===d?'background:'+d.color+';color:#fff':'background:#fff;color:var(--ink)'}" onclick="S.tutorDept=${sel===d?'null':`'${esc(d.name)}'`};render()">${d.emoji} ${esc(d.name)} <span style="opacity:.75;font-weight:600">· ${n} class${n===1?'':'es'}${students?' · '+students+' student'+(students===1?'':'s'):''}</span></button>`; }).join('')}</div>` : ''}
-      ${sel ? `<div class="sectlabel">Classes in ${esc(sel.name)}</div>${classGrid(true, false, sel.courses.filter(x=>mine.includes(x)))}` : depts.length ? '<div class="card tiny" style="text-align:center">Pick a subject above to see its classes.</div>' : ''}
-      ${quiet && mine.length ? `<div class="tiny" style="margin:4px 2px 10px">${quiet} more class${quiet===1?'':'es'} you tutor ${quiet===1?'has':'have'} no students yet, so ${quiet===1?'it is':'they are'} hidden here.</div>` : ''}
-      <div style="margin-top:${sel?'14px':'0'}"><button class="card addcard" style="width:100%;min-height:56px" onclick="S.tab='classes'; openView({type:'addClasses'})">＋ Add a class I tutor</button></div>`;
+      <div class="lead">${mine.length ? 'Every class you tutor, by subject. Open one for the students taking it.' : S.tutorClasses.length ? 'None of your classes has a student in it yet. They show up here as soon as someone adds one.' : 'Add the classes you tutor and they show up here by subject.'}</div>
+      ${depts.map(section).join('')}
+      ${quiet && mine.length ? `<div class="tiny" style="margin:12px 2px 0">${quiet} more class${quiet===1?'':'es'} you tutor ${quiet===1?'has':'have'} no students yet, so ${quiet===1?'it is':'they are'} hidden here.</div>` : ''}
+      <div style="margin-top:16px"><button class="card addcard" style="width:100%;min-height:56px" onclick="S.tab='classes'; openView({type:'addClasses'})">＋ Add a class I tutor</button></div>`;
     return;
   }
   c.innerHTML = `
