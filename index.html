@@ -938,7 +938,7 @@ function renderHome(c){
       ${adminButtonHtml()}
     </div>`;
   // The week's calendar comes first on both the student and tutor home.
-  c.innerHTML = head + weekHeadHtml() + weekStrip() + (S.mode==='tutor' && S.me.isTutor ? '' : yourClassesHtml()) + scheduleNudgeHtml() + checkinPromptHtml() + ratePromptHtml() + (S.mode==='tutor' && S.me.isTutor ? tutorDashboard() : '');
+  c.innerHTML = head + weekHeadHtml() + weekStrip() + (S.mode==='tutor' && S.me.isTutor ? '' : yourClassesHtml()) + scheduleNudgeHtml() + checkinPromptHtml() + ratePromptHtml() + (S.mode==='tutor' && S.me.isTutor ? tutorDashboard() : helpNowHtml());
 }
 
 // The administrator's home: what is waiting, where the gaps are, who is
