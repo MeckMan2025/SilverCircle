@@ -1097,9 +1097,7 @@ function studentDashboard(){
     ${helpNowHtml()}
 
     <div class="sectlabel">Community</div>
-    <div class="card">${feed.length ? feed.map(postRow).join('') : `<div class="tiny" style="text-align:center;padding:8px">Nothing new in your classes this week.</div>`}</div>
-
-    <button class="btn bigbtn" onclick="go('classes')">Find a Tutor</button>`;
+    <div class="card">${feed.length ? feed.map(postRow).join('') : `<div class="tiny" style="text-align:center;padding:8px">Nothing new in your classes this week.</div>`}</div>`;
 }
 
 // "Help needed now": one line, one class, and tutors of that class see it first.
