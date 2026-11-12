@@ -580,7 +580,7 @@ function renderInner(){
 }
 
 let menuOpen = false;
-const TAB_TITLES = { settings:'Settings', help:'Help', home:'Home Screen', classes:'Classes', calendar:'Calendar', tutoring:'Tutoring', community:'Community', profile:'Profile', 'admin-grades':'People to check', 'admin-requests':'All requests', 'admin-team':'Members', 'admin-times':'Session times', 'admin-need':'Tutor need', admin:'Administration' };
+const TAB_TITLES = { settings:'Settings', help:'Help', home:'Home Screen', classes:'Classes', calendar:'Calendar', tutoring:'Tutoring', community:'Community', profile:'Profile', 'admin-grades':'People to check', 'admin-requests':'All requests', 'admin-team':'Members', 'admin-need':'Tutor need', admin:'Administration' };
 const isStaff = () => !!(A.profile && (A.profile.role==='admin' || A.profile.role==='board'));
 const hasGrade = () => !!(A.profile && A.profile.role==='student');   // staff accounts carry no grade
 // Administrators run the program; they are neither tutors nor tutees. No
@@ -763,8 +763,6 @@ function renderNav(){
       <hr>
       ${item('admin-team','🛡️','Members')}
       <hr>
-      ${item('admin-times','🕒','Session times')}
-      <hr>
       ${item('admin-need','📊','Tutor need', needGapCount() ? `<span class="count">${needGapCount()}</span>` : '')}
       <hr>
       ${item('classes','📚','Classes')}
@@ -824,7 +822,6 @@ function renderBody(){
   if(S.tab==='admin-grades') return renderAdminGrades(c);
   if(S.tab==='admin-requests') return renderAdminRequests(c);
   if(S.tab==='admin-team') return renderAdminTeam(c);
-  if(S.tab==='admin-times') return renderAdminTimes(c);
   if(S.tab==='admin-need') return renderTutorNeed(c);
   S.tab='home'; return renderHome(c);   // an unknown tab never shows an empty page
 }
@@ -1902,7 +1899,7 @@ function groupsHtml(course){
 // A study group's chat: its own screen, bubbles like the session chat.
 // ---- Quiet hours: no messaging during the school day ----
 // 8:00 AM to 3:30 PM on school days (Mon–Fri), every chat is read-only. An
-// administrator can change the window under Session times.
+// window comes from sl_settings 'quiet' (or the default).
 const DEFAULT_QUIET = { start:480, end:930, days:[1,2,3,4,5] };
 function quietHours(){ const q=S.settings && S.settings.quiet; return q && typeof q.start==='number' ? q : DEFAULT_QUIET; }
 function inQuietHours(now=new Date()){
@@ -2186,27 +2183,28 @@ function slotMin(label){
 }
 function minLabel(min){ if(min>=1440) return '12:00 AM'; const h=Math.floor(min/60), mm=min%60, h12=((h+11)%12)+1; return h12+':'+(mm<10?'0':'')+mm+' '+(h<12?'AM':'PM'); }
 // When tutoring happens, and where. Before school and 8th period are inside
-// the school; the hour-long after-school slots are off campus, so nothing
-// over 45 minutes is ever in the building. A student may tick several times
-// and places (or none) and the tutor picks when they accept.
-const SLOT_GROUPS = ['Before school','8th period','After school'];
-const IN_SCHOOL_GROUPS = ['Before school','8th period'];
+// the school; the hour-long after-school slots are off campus. During the
+// school day the only times are study halls: a period works when BOTH people
+// have study hall in it (freeAt enforces that). A student may tick several
+// times and places (or none) and the tutor picks when they accept.
+const SLOT_GROUPS = ['Before school','Study hall','8th period','After school'];
+const IN_SCHOOL_GROUPS = ['Before school','Study hall','8th period'];
 const slotLabel = (a,b) => minLabel(a).replace(/ (AM|PM)$/,'')+'–'+minLabel(b);
-const mkSlot = (group,a,b) => ({ group, label:slotLabel(a,b), start:a, end:b, school:IN_SCHOOL_GROUPS.includes(group) });
+const mkSlot = (group,a,b,period) => ({ group, label:slotLabel(a,b), start:a, end:b, school:IN_SCHOOL_GROUPS.includes(group), period });
 const DEFAULT_SESSIONS = {
   slots: [['Before school',450,480],['8th period',885,930], ...[[930,990],[960,1020],[990,1050],[1020,1080],[1050,1110],[1080,1140],[1110,1170],[1140,1200]].map(([a,b])=>['After school',a,b])],
   schoolPlaces: ['Library','Cafeteria','Commons','Other'],
   offCampusPlaces: ['Bettendorf Public Library','Vibrant Coffeehouse and Kitchen','Other'],
 };
-// Editable by an administrator (Session times); defaults until sl_settings has a row.
+// From sl_settings when an administrator saved them once; defaults otherwise.
 let SESSION_SLOTS = [], SCHOOL_PLACES = [], OFF_CAMPUS_PLACES = [];
 function applySessionSettings(v){
   const c = v && Array.isArray(v.slots) && v.slots.length ? v : DEFAULT_SESSIONS;
-  SESSION_SLOTS = c.slots.map(([g,a,b])=>mkSlot(g,+a,+b)).sort((x,y)=>SLOT_GROUPS.indexOf(x.group)-SLOT_GROUPS.indexOf(y.group) || x.start-y.start);
+  SESSION_SLOTS = c.slots.filter(([g])=>g!=='Study hall').map(([g,a,b])=>mkSlot(g,+a,+b))
+    .concat(bell().periods.map(([n,a,b])=>mkSlot('Study hall',+a,+b,+n))).sort((x,y)=>SLOT_GROUPS.indexOf(x.group)-SLOT_GROUPS.indexOf(y.group) || x.start-y.start);
   SCHOOL_PLACES = (c.schoolPlaces||DEFAULT_SESSIONS.schoolPlaces).slice(); if(!SCHOOL_PLACES.includes('Other')) SCHOOL_PLACES.push('Other');
   OFF_CAMPUS_PLACES = (c.offCampusPlaces||DEFAULT_SESSIONS.offCampusPlaces).slice(); if(!OFF_CAMPUS_PLACES.includes('Other')) OFF_CAMPUS_PLACES.push('Other');
 }
-applySessionSettings(null);
 const slotByLabel = l => SESSION_SLOTS.find(x=>x.label===l);
 const VIBRANT = 'Vibrant Coffeehouse and Kitchen', VIBRANT_CLOSE = 18*60, VIBRANT_BOOK_URL = 'https://cal.com/vibrant-qc';
 const MAX_SCHOOL_MINUTES = 45;
@@ -2228,8 +2226,8 @@ function pickerHtml(){
   const chip=(on,label,fn,extra='')=>`<button class="chip ${on?'dept':''}" style="${on?'background:var(--blue)':''}" onclick="${fn}">${on?'✓ ':''}${esc(label)}${extra}</button>`;
   return `
     <div class="field" style="margin-top:12px"><label>When works for you? <span class="tiny" style="text-transform:none;letter-spacing:0;font-weight:600">Tick any that work, or none and the tutor picks.</span></label>
-      ${SLOT_GROUPS.map(g=>`<div class="tiny" style="margin:6px 0 4px;font-weight:800">${g}${g==='After school'?' <span style="font-weight:600">· one hour, off campus</span>':''}</div>
-        <div class="chips">${SESSION_SLOTS.filter(x=>x.group===g).map(x=>{ const r=pickerFree(x.label); return chip(pick.times.has(x.label), x.label, `pickToggle('times','${x.label}')`, r===null?'':r?'':' <span style="color:#c23b5e">busy</span>'); }).join('')}</div>`).join('')}
+      ${SLOT_GROUPS.filter(g=>SESSION_SLOTS.some(x=>x.group===g && slotShown(x))).map(g=>`<div class="tiny" style="margin:6px 0 4px;font-weight:800">${g}${g==='After school'?' <span style="font-weight:600">· one hour, off campus</span>':g==='Study hall'?' <span style="font-weight:600">· only when you both have one</span>':''}</div>
+        <div class="chips">${SESSION_SLOTS.filter(x=>x.group===g && slotShown(x)).map(x=>{ const r=pickerFree(x.label); return chip(pick.times.has(x.label), x.label, `pickToggle('times','${x.label}')`, r===null?'':r?'':' <span style="color:#c23b5e">busy</span>'); }).join('')}</div>`).join('')}
     </div>
     <div class="field" style="margin-bottom:0"><label>Where? <span class="tiny" style="text-transform:none;letter-spacing:0;font-weight:600">${chosen.length ? 'Tick any.' : 'Pick a time first, or leave it to the tutor.'}</span></label>
       <div class="chips">${places.map(pl=>chip(pick.places.has(pl), pl, `pickToggle('places','${pl}')`)).join('')}</div>
@@ -2289,6 +2287,8 @@ function freeAt(userId, dateKey, timeLabel){
   const hit = b => min>=b.start_min && min<b.end_min;
   const cls=classesOn(userId, dateKey).find(hit);
   if(cls) return { free:false, inClass:true, why:'in class then ('+cls.note.slice(CLASS_NOTE.length)+', '+minLabel(cls.start_min)+'–'+minLabel(cls.end_min)+')' };
+  const sd=schoolDay(userId, dateKey, min);
+  if(sd.inDay && !sd.study) return { free:false, inClass:true, why: sd.period ? 'no study hall period '+sd.period : 'school day, no study hall then' };
   const busy=blocks.find(b=>b.kind==='unavailable' && hit(b));
   if(busy) return { free:false, why: busy.start_min===0&&busy.end_min===1440 ? 'unavailable that day' : 'unavailable '+minLabel(busy.start_min)+'–'+minLabel(busy.end_min) };
   const windows=blocks.filter(b=>b.kind==='available');
@@ -2355,8 +2355,8 @@ async function submitRequest(tid){
 /* -------- CLASS SCHEDULE -------- */
 // Nobody can book tutoring during your classes. Students pick a class (or
 // Study hall) for each period and say which lunch they have; the times come
-// from the school's bell schedule, which an administrator sets under Session
-// times. Study hall and lunch stay open for tutoring.
+// from the school's bell schedule (sl_settings 'bell', or the default). During the
+// school day tutoring only happens when both people have study hall.
 const DEFAULT_BELL = {
   periods: [[1,480,530],[2,535,585],[3,590,640],[4,645,695],[5,730,780],[6,785,835],[7,840,890]],
   lunches: [['A lunch',660,690],['B lunch',695,725],['C lunch',730,760]],
@@ -2370,13 +2370,28 @@ const isPE = v => v===PE1 || v===PE2;
 function myGradeLevel(){ return (S.setup && S.setup.grade) || S.me.grade || (A.profile && A.profile.grade_level) || null; }
 const peSplits = () => Number(myGradeLevel())!==9;
 function bell(){ const b=S.settings && S.settings.bell; return b && Array.isArray(b.periods) && b.periods.length ? b : DEFAULT_BELL; }
+applySessionSettings(null);   // here, once the bell schedule above exists
 const hhmm = m => String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
 const toMin = v => { const [h,m]=(v||'').split(':').map(Number); return isNaN(h)||isNaN(m) ? null : h*60+m; };
-function myPlan(){
-  const b=(S.availability||[]).find(x=>A.user && x.user_id===A.user.id && isPlanBlock(x));
+function planOf(userId){
+  const b=(S.availability||[]).find(x=>x.user_id===userId && isPlanBlock(x));
   if(!b) return null;
   try { return JSON.parse(b.note.slice(PLAN_NOTE.length)); } catch(e){ return null; }
 }
+function myPlan(){ return A.user ? planOf(A.user.id) : null; }
+// During the school day (Monday to Friday, first bell to last) tutoring only
+// happens in a study hall. Anyone without one then, or with no schedule
+// entered, is busy.
+function schoolDay(userId, dateKey, min){
+  const wd=parseYmd(dateKey).getDay(), P=bell().periods;
+  if(wd===0 || wd===6 || !P.length || min<P[0][1] || min>=P[P.length-1][2]) return { inDay:false };
+  const per=P.find(([n,a,b])=>min>=a && min<b);
+  const plan=planOf(userId);
+  return { inDay:true, period: per && per[0], study: !!(per && plan && plan.periods && plan.periods[per[0]]===STUDY) };
+}
+// My study hall periods, so request forms only offer those.
+const myStudyPeriods = () => { const p=myPlan(); return new Set(Object.entries((p&&p.periods)||{}).filter(([,v])=>v===STUDY).map(([k])=>+k)); };
+const slotShown = x => x.group!=='Study hall' || myStudyPeriods().has(x.period);
 // The draft is { periods:{ '1':'Algebra 2', '2':'Study hall', … }, lunch:'B lunch' }.
 // Someone with an older, typed schedule gets each period matched by time, and
 // the class kept when the name they typed is a real class.
@@ -2407,7 +2422,7 @@ function scheduleEditorHtml(d){
       ${n!==undefined && full(n) ? rest.map(({d,cs})=>`<optgroup label="${d.emoji} ${esc(d.name)}">${cs.map(x=>`<option ${v===x?'selected':''}>${esc(x)}</option>`).join('')}</optgroup>`).join('')
         : `${v && ALL_COURSES.includes(v) && !mine.includes(v) ? `<option selected>${esc(v)}</option>` : ''}<option value="__more">＋ Another class…</option>`}`;
   return `<div class="card">
-    <div class="tiny" style="font-size:13px;margin-bottom:10px;line-height:1.5">Pick the class you have each period, or <b>Study hall</b>. Nobody can book tutoring during a class. Study hall and lunch stay open.${mine.length ? ' The list shows the classes you take; pick <b>Another class…</b> if one is missing.' : ''}</div>
+    <div class="tiny" style="font-size:13px;margin-bottom:10px;line-height:1.5">Pick the class you have each period, or <b>Study hall</b>. During the school day, tutoring only happens in a study hall you and the other person both have.${mine.length ? ' The list shows the classes you take; pick <b>Another class…</b> if one is missing.' : ''}</div>
     ${B.periods.map(([n,a,b])=>{ const v=d.periods[n]||'', o=d.periods[n+'b']||STUDY; return `<div class="periodrow ${v===STUDY?'study':''}">
       <span class="pn">Period ${n}</span><span class="pt">${minLabel(a)} – ${minLabel(b)}</span>
       <select aria-label="Period ${n}" onchange="if(this.value==='__more'){ S.schedDraft.full=S.schedDraft.full||{}; S.schedDraft.full['${n}']=true; render(); return; } S.schedDraft.periods['${n}']=this.value; if(!isPE(this.value)) delete S.schedDraft.periods['${n}b']; render()">${opts(v, n)}</select>
@@ -2501,7 +2516,7 @@ function renderSchedule(c){
       <div class="field"><label>Topic</label><input id="sc_topic" placeholder="e.g. Unit 3 review"></div>
       <div class="row" style="gap:10px">
         <div class="field" style="flex:1;margin:0"><label>Day</label><input id="sc_day" type="date" value="${date}" min="${ymd(new Date())}" onchange="checkClash()"></div>
-        <div class="field" style="flex:1;margin:0"><label>Time</label><select id="sc_time" onchange="checkClash();fillLocations()">${SESSION_SLOTS.map(x=>`<option value="${x.label}" ${x.label==='3:30–4:30 PM'?'selected':''}>${x.group} · ${x.label}</option>`).join('')}</select></div>
+        <div class="field" style="flex:1;margin:0"><label>Time</label><select id="sc_time" onchange="checkClash();fillLocations()">${SESSION_SLOTS.filter(slotShown).map(x=>`<option value="${x.label}" ${x.label==='3:30–4:30 PM'?'selected':''}>${x.group}${x.period?' (period '+x.period+')':''} · ${x.label}</option>`).join('')}</select></div>
       </div>
       <div id="sc_clash" class="tiny" style="margin-top:8px"></div>
       <div class="field" style="margin-top:12px"><label>Where</label>
@@ -2573,7 +2588,7 @@ function renderRetime(c){
     <div class="card">
       <div class="row" style="gap:10px">
         <div class="field" style="flex:1;margin:0"><label>Day</label><input id="rt_day" type="date" value="${r.date && r.date>=ymd(new Date()) ? r.date : ymd(addDays(new Date(),1))}" min="${ymd(new Date())}" onchange="checkRetime()"></div>
-        <div class="field" style="flex:1;margin:0"><label>Time</label><select id="rt_time" onchange="checkRetime()">${SESSION_SLOTS.map(x=>`<option value="${x.label}" ${x.label===(splitOptions(r.time)[0]||'3:30–4:30 PM')?'selected':''}>${x.group} · ${x.label}</option>`).join('')}</select></div>
+        <div class="field" style="flex:1;margin:0"><label>Time</label><select id="rt_time" onchange="checkRetime()">${SESSION_SLOTS.filter(slotShown).map(x=>`<option value="${x.label}" ${x.label===(splitOptions(r.time)[0]||'3:30–4:30 PM')?'selected':''}>${x.group}${x.period?' (period '+x.period+')':''} · ${x.label}</option>`).join('')}</select></div>
       </div>
       <div id="rt_ok" class="tiny" style="margin-top:8px"></div>
       <div class="field" style="margin:12px 0 0"><label>Message (optional)</label><input id="rt_msg" placeholder="e.g. I have practice Thursday — does Friday work?"></div>
@@ -3287,7 +3302,7 @@ function renderProfile(c){
     </div>`}
 
     ${hasSchedule() ? `<div class="sectlabel">Class schedule <button class="btn ghost sm" style="margin-left:8px;padding:4px 10px" onclick="S.schedDraft=null; openView({type:'classSchedule'})">Edit</button></div>
-    <div class="card">${scheduleSummaryHtml()}<div class="tiny" style="margin-top:8px">Nobody can book tutoring with you during these. Study hall and lunch stay open.</div></div>` : ''}
+    <div class="card">${scheduleSummaryHtml()}<div class="tiny" style="margin-top:8px">During the school day you can only be tutored or tutor in a study hall, and only with someone who has study hall then too.</div></div>` : ''}
 
     <div class="sectlabel">Account</div>
     <div class="card tiny">🔒 Other members only ever see your aliases. Your name and email stay with the school administrator; coordination happens in-app.</div>
@@ -3627,7 +3642,6 @@ function renderAdminHub(c){
     ${tile('admin-grades','✅','People to check', S.pendingGrades ? S.pendingGrades+' waiting' : 'Nothing waiting', S.pendingGrades)}
     ${tile('admin-requests','📋','All requests','Every tutoring request in the school')}
     ${tile('admin-team','🛡️','Members','Approve people, join codes, levels')}
-    ${tile('admin-times','🕒','Session times','When tutoring can happen, and where')}
     ${tile('admin-need','📊','Tutor need','Where students need help and there are too few tutors', needGapCount())}`;
 }
 // High-need classes: the badge on the Tutor need button.
@@ -3807,83 +3821,6 @@ function renderMemberDetail(c){
     </div>
     ${taking.length ? `<div class="card"><div style="font-weight:800;margin-bottom:4px">Taking</div><div class="tiny">${taking.map(esc).join(' · ')}</div></div>` : ''}
     ` : ''}`;
-}
-
-// Session times: the slots students can tick and the places that go with
-// them, edited here and saved for everyone.
-function renderAdminTimes(c){
-  if(!isStaff()) return go('home');
-  const cur = S.settings && S.settings.sessions && S.settings.sessions.slots ? S.settings.sessions : DEFAULT_SESSIONS;
-  const cq = quietHours();
-  const d = S.timesDraft = S.timesDraft || { slots: cur.slots.map(x=>x.slice()), schoolPlaces:(cur.schoolPlaces||[]).filter(x=>x!=='Other').join(', '), offCampusPlaces:(cur.offCampusPlaces||[]).filter(x=>x!=='Other').join(', '), quiet:{ start:cq.start, end:cq.end, days:cq.days.slice() }, bell:{ periods:bell().periods.map(x=>x.slice()), lunches:bell().lunches.map(x=>x.slice()) } };
-  const inp='padding:9px 10px;border:1.5px solid #e5e2f0;border-radius:10px;font:inherit;font-size:14px;background:#fff';
-  const t2v = m => (Math.floor(m/60)+'').padStart(2,'0')+':'+(m%60+'').padStart(2,'0');
-  const row = (sl,i) => `<div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px">
-      <select style="flex:1 1 140px;${inp}" onchange="S.timesDraft.slots[${i}][0]=this.value;render()">${SLOT_GROUPS.map(g=>`<option ${sl[0]===g?'selected':''}>${g}</option>`).join('')}</select>
-      <input type="time" value="${t2v(sl[1])}" step="300" style="flex:0 0 118px;${inp}" onchange="S.timesDraft.slots[${i}][1]=timeToMin(this.value);render()">
-      <span class="tiny">to</span>
-      <input type="time" value="${t2v(sl[2])}" step="300" style="flex:0 0 118px;${inp}" onchange="S.timesDraft.slots[${i}][2]=timeToMin(this.value);render()">
-      <span class="tiny" style="flex:0 0 60px">${sl[2]>sl[1] ? (sl[2]-sl[1])+' min' : '<b style="color:#c23b5e">ends first</b>'}</span>
-      <button class="mini danger" onclick="S.timesDraft.slots.splice(${i},1);render()">Remove</button>
-    </div>`;
-  const bad = d.bell.periods.some(x=>x[2]<=x[1]) || d.bell.lunches.some(x=>x[2]<=x[1] || !String(x[0]).trim()) || d.slots.some(sl=>sl[2]<=sl[1]) || d.slots.some(sl=>IN_SCHOOL_GROUPS.includes(sl[0]) && sl[2]-sl[1]>MAX_SCHOOL_MINUTES);
-  c.innerHTML = `
-    <button class="back" onclick="go(isAdmin()?'home':'admin')">‹ ${isAdmin() ? 'Home' : A.profile.role==='board' ? 'Board' : 'Administration'}</button>
-    <h2 class="title">Session times</h2>
-    <div class="lead">The times a student can tick when they ask for tutoring, and the places that go with them. Before school and 8th period are inside the school, so they can't be longer than ${MAX_SCHOOL_MINUTES} minutes; after-school sessions are off campus.</div>
-    ${S.groupsReady===false && !(S.settings&&S.settings.sessions) ? '' : ''}
-    ${SLOT_GROUPS.map(g=>`<div class="sectlabel">${g}</div><div class="card" style="padding:12px 14px 4px">
-      ${d.slots.map((sl,i)=>sl[0]===g?row(sl,i):'').join('') || '<div class="tiny" style="margin-bottom:8px">No times yet.</div>'}
-      <div style="margin-bottom:8px"><button class="btn ghost sm" onclick="S.timesDraft.slots.push(['${g}',${g==='Before school'?'450,480':g==='8th period'?'885,930':'930,990'}]);render()">＋ Add a time</button></div>
-    </div>`).join('')}
-    <div class="sectlabel">Bell schedule · class periods</div>
-    <div class="card" style="padding:12px 14px 4px">
-      ${d.bell.periods.map((pr,i)=>`<div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px"><span style="font-weight:800;width:72px">Period ${pr[0]}</span>
-        <input type="time" value="${t2v(pr[1])}" step="300" style="flex:0 0 118px;${inp}" onchange="S.timesDraft.bell.periods[${i}][1]=timeToMin(this.value);render()"><span class="tiny">to</span>
-        <input type="time" value="${t2v(pr[2])}" step="300" style="flex:0 0 118px;${inp}" onchange="S.timesDraft.bell.periods[${i}][2]=timeToMin(this.value);render()">
-        ${i===d.bell.periods.length-1 ? `<button class="mini danger" onclick="S.timesDraft.bell.periods.pop();render()">Remove</button>` : ''}</div>`).join('')}
-      <div style="margin-bottom:8px"><button class="btn ghost sm" onclick="const p=S.timesDraft.bell.periods, l=p[p.length-1]; p.push([l?l[0]+1:1, l?l[2]+5:480, l?l[2]+55:530]);render()">＋ Add a period</button></div>
-      <div class="tiny" style="margin-bottom:8px">Students pick a class or Study hall for each of these. Tutoring can't be booked during their classes.</div>
-    </div>
-    <div class="sectlabel">Lunches</div>
-    <div class="card" style="padding:12px 14px 4px">
-      ${d.bell.lunches.map((l,i)=>`<div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px">
-        <input value="${esc(l[0])}" style="flex:0 0 110px;${inp}" oninput="S.timesDraft.bell.lunches[${i}][0]=this.value">
-        <input type="time" value="${t2v(l[1])}" step="300" style="flex:0 0 118px;${inp}" onchange="S.timesDraft.bell.lunches[${i}][1]=timeToMin(this.value);render()"><span class="tiny">to</span>
-        <input type="time" value="${t2v(l[2])}" step="300" style="flex:0 0 118px;${inp}" onchange="S.timesDraft.bell.lunches[${i}][2]=timeToMin(this.value);render()">
-        <button class="mini danger" onclick="S.timesDraft.bell.lunches.splice(${i},1);render()">Remove</button></div>`).join('')}
-      <div style="margin-bottom:8px"><button class="btn ghost sm" onclick="S.timesDraft.bell.lunches.push([String.fromCharCode(65+S.timesDraft.bell.lunches.length)+' lunch',690,720]);render()">＋ Add a lunch</button></div>
-      <div class="tiny" style="margin-bottom:8px">Each student picks one. Their lunch stays open for tutoring even when it falls inside a class period.</div>
-    </div>
-    <div class="sectlabel">Quiet hours · no messaging</div>
-    <div class="card"><div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
-      <input type="time" value="${t2v(d.quiet.start)}" step="300" style="flex:0 0 118px;${inp}" onchange="S.timesDraft.quiet.start=timeToMin(this.value);render()"><span class="tiny">to</span>
-      <input type="time" value="${t2v(d.quiet.end)}" step="300" style="flex:0 0 118px;${inp}" onchange="S.timesDraft.quiet.end=timeToMin(this.value);render()">
-      <div class="chips" style="margin-left:6px">${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((n,i)=>`<button class="chip ${d.quiet.days.includes(i)?'dept':''}" style="${d.quiet.days.includes(i)?'background:var(--blue)':''}" onclick="const a=S.timesDraft.quiet.days,j=a.indexOf(${i}); j<0?a.push(${i}):a.splice(j,1); render()">${n}</button>`).join('')}</div>
-    </div><div class="tiny" style="margin-top:6px">Chats are read-only in this window on the ticked days. Scheduling (accepting, moving a session) still works.</div></div>
-    <div class="sectlabel">Places inside the school</div>
-    <div class="card"><input value="${esc(d.schoolPlaces)}" placeholder="Library, Cafeteria, Commons" style="width:100%;${inp}" oninput="S.timesDraft.schoolPlaces=this.value"><div class="tiny" style="margin-top:6px">Separate with commas. "Other" with a type-in box is always offered.</div></div>
-    <div class="sectlabel">Places off campus</div>
-    <div class="card"><input value="${esc(d.offCampusPlaces)}" placeholder="Bettendorf Public Library, Vibrant Coffeehouse and Kitchen" style="width:100%;${inp}" oninput="S.timesDraft.offCampusPlaces=this.value"><div class="tiny" style="margin-top:6px">Vibrant is only offered for sessions that end by 6 PM, and shows a reserve-ahead note.</div></div>
-    <div class="row" style="gap:8px;margin-top:16px">
-      <button class="btn gray" style="flex:1" onclick="S.timesDraft=null;render()">Reset</button>
-      <button class="btn" style="flex:2" ${bad?'disabled':''} onclick="saveSessionTimes(this)">Save for everyone</button>
-    </div>
-    ${bad ? '<div class="tiny" style="margin-top:8px;color:#c23b5e">Every time needs to end after it starts, and in-school times can be at most '+MAX_SCHOOL_MINUTES+' minutes.</div>' : ''}`;
-}
-const timeToMin = v => { const m=/^(\d+):(\d+)/.exec(v||''); return m ? (+m[1])*60 + (+m[2]) : 0; };
-async function saveSessionTimes(btn){
-  const d=S.timesDraft; if(!d) return;
-  const value = { slots: d.slots.map(sl=>[sl[0],+sl[1],+sl[2]]).sort((x,y)=>SLOT_GROUPS.indexOf(x[0])-SLOT_GROUPS.indexOf(y[0]) || x[1]-y[1]),
-    schoolPlaces: d.schoolPlaces.split(',').map(x=>x.trim()).filter(Boolean), offCampusPlaces: d.offCampusPlaces.split(',').map(x=>x.trim()).filter(Boolean) };
-  btn.disabled=true; btn.textContent='Saving…';
-  try{
-    const quiet={ start:+d.quiet.start, end:+d.quiet.end, days:d.quiet.days.slice().sort() };
-    const bellV={ periods:d.bell.periods.map(x=>[+x[0],+x[1],+x[2]]), lunches:d.bell.lunches.map(x=>[String(x[0]).trim(),+x[1],+x[2]]) };
-    await sbFetch('/rest/v1/sl_settings', { method:'POST', headers:{ Prefer:'return=minimal,resolution=merge-duplicates' }, body:JSON.stringify([{ key:'sessions', value, updated_at:new Date().toISOString(), updated_by:A.user.id },{ key:'quiet', value:quiet, updated_at:new Date().toISOString(), updated_by:A.user.id },{ key:'bell', value:bellV, updated_at:new Date().toISOString(), updated_by:A.user.id }]) });
-    S.settings = S.settings||{}; S.settings.sessions=value; S.settings.quiet=quiet; S.settings.bell=bellV; applySessionSettings(value); S.timesDraft=null;
-    toast('Session times saved'); render();
-  }catch(e){ toast(/sl_settings/.test(e.message) ? 'The settings table is not set up yet — run sql/sl_settings_and_groups.sql.' : e.message); btn.disabled=false; btn.textContent='Save for everyone'; }
 }
 
 // Who runs SilverCircle. A seat is granted by email, so it applies the moment
