@@ -342,6 +342,13 @@
   .avatar{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:17px;flex:0 0 auto}
   .row{display:flex; align-items:center; gap:12px}
   .grade{font-weight:800; padding:2px 8px; border-radius:8px; font-size:12px}
+  /* Profile class lists: compact chips that wrap, instead of one long row each */
+  .cchips{display:flex; flex-wrap:wrap; gap:8px}
+  .cchip{display:inline-flex; align-items:center; gap:7px; padding:5px 10px 5px 5px; border:1px solid var(--line); border-radius:12px; background:#faf9fe; font-weight:700; font-size:14px; line-height:1.2}
+  .cchip .grade{padding:2px 7px}
+  .cchip .grade.none{background:#eeedf3; color:var(--muted)}
+  .cchip .st{font-size:12px; font-weight:800}
+  .cchip .st.ok{color:#2e9b6a} .cchip .st.wait{color:#c98b34} .cchip .st.no{color:#d0546f}
   .g-A{background:#e4f6ec;color:#2e9b6a}.g-B{background:#e6eefb;color:#4d7fd6}.g-C{background:#fbf1e2;color:#c98b34}
   .stars{color:var(--star); font-weight:800; font-size:13px}
   .tiny{font-size:11.5px; color:var(--muted); font-weight:600}
@@ -566,7 +573,7 @@ function renderInner(){
 }
 
 let menuOpen = false;
-const TAB_TITLES = { settings:'Settings', help:'Help', home:'Home Screen', classes:'Classes', calendar:'Calendar', tutoring:'Tutoring', community:'Community', profile:'Profile', 'admin-grades':'People to check', 'admin-requests':'All requests', 'admin-team':'Members', 'admin-times':'Session times', admin:'Administration' };
+const TAB_TITLES = { settings:'Settings', help:'Help', home:'Home Screen', classes:'Classes', calendar:'Calendar', tutoring:'Tutoring', community:'Community', profile:'Profile', 'admin-grades':'People to check', 'admin-requests':'All requests', 'admin-team':'Members', 'admin-times':'Session times', 'admin-need':'Tutor need', admin:'Administration' };
 const isStaff = () => !!(A.profile && (A.profile.role==='admin' || A.profile.role==='board'));
 const hasGrade = () => !!(A.profile && A.profile.role==='student');   // staff accounts carry no grade
 // Administrators run the program; they are neither tutors nor tutees. No
@@ -751,6 +758,8 @@ function renderNav(){
       <hr>
       ${item('admin-times','🕒','Session times')}
       <hr>
+      ${item('admin-need','📊','Tutor need', needGapCount() ? `<span class="count">${needGapCount()}</span>` : '')}
+      <hr>
       ${item('classes','📚','Classes')}
       <hr>
       ${item('community','💬','Community')}
@@ -809,6 +818,7 @@ function renderBody(){
   if(S.tab==='admin-requests') return renderAdminRequests(c);
   if(S.tab==='admin-team') return renderAdminTeam(c);
   if(S.tab==='admin-times') return renderAdminTimes(c);
+  if(S.tab==='admin-need') return renderTutorNeed(c);
   S.tab='home'; return renderHome(c);   // an unknown tab never shows an empty page
 }
 
@@ -879,6 +889,41 @@ function scheduleNudgeHtml(){
     <div style="flex:1"><div style="font-weight:800">Add your class schedule</div><div class="tiny">So nobody books tutoring with you during class.</div></div>
     <button class="btn sm" onclick="S.schedDraft=null; openView({type:'classSchedule'})">Add it</button></div>`;
 }
+// "This week" over the calendar, with the next tutoring session beside it
+// (it may be past this week, so the strip alone would not show it).
+function weekHeadHtml(){
+  const today=ymd(new Date()), role = S.mode==='tutor' && S.me.isTutor ? 'tutor' : 'student';
+  const next = sessionsList().filter(x=>x.role===role && x.date && x.date>=today).sort((a,b)=>a.date.localeCompare(b.date)||(a.time||'').localeCompare(b.time||''))[0];
+  return `<div class="sectlabel" style="margin-top:4px">This week <span class="tiny" style="font-weight:600;text-transform:none;letter-spacing:0">· ${next
+    ? `next session: ${esc(next.course)} ${esc(dayWord(next.date))} at ${esc(next.time)} with ${esc(next.with)}${next.location?' · 📍 '+esc(next.location):''}`
+    : 'no tutoring booked yet'}</span></div>`;
+}
+// The student home's class list. It sits right under the week's calendar.
+function yourClassesHtml(){
+  const mine = ALL_COURSES.filter(x=>S.myClasses.includes(x));
+  // Each class across the screen: how many tutors it has, where your request
+  // stands, and one button: message your tutor, or find one if you have none.
+  const row = cs => {
+    const reqs = S.myRequests.filter(x=>x.course===cs && x.tutor_id && ['pending','offered','accepted','done'].includes(x.status));
+    const live = reqs.filter(x=>x.status!=='done').sort((a,b)=>(a.date||'9999').localeCompare(b.date||'9999'))[0];
+    const mineT = live || reqs.sort((a,b)=>(b.date||'').localeCompare(a.date||''))[0];
+    const n = tutorsFor(cs).length, posts = newPostCount(cs);
+    const status = live ? `<span style="${live.status==='accepted'?'color:#2e9b6a':'color:#c98b34'}">${live.status==='accepted' ? 'Session '+esc(dayWord(live.date))+' ✓' : STATUS_WORD[live.status]}</span>` : '';
+    const btn = mineT
+      ? `<button class="btn sm" onclick="event.stopPropagation(); openView({type:'chat', id:'${mineT.id}'})">💬 Message ${esc(mineT.tutor_alias||'your tutor')}</button>`
+      : n ? `<button class="btn sm green" onclick="event.stopPropagation(); openClass('${esc(cs)}')">Find a tutor</button>`
+      : '';
+    return `<div class="listrow" onclick="openClass('${esc(cs)}')" style="gap:10px;flex-wrap:wrap"><span class="dot" style="background:${courseColor(cs)}"></span>
+      <div style="flex:1;min-width:150px"><div style="font-weight:800">${esc(cs)}</div>
+        <div class="tiny">${n ? n+' tutor'+(n===1?'':'s')+' available' : 'No tutors yet'}${posts ? ' · '+posts+' new post'+(posts===1?'':'s') : ''}${status ? ' · '+status : ''}</div></div>
+      ${btn}</div>`;
+  };
+  return `
+    <div class="sectlabel">Your classes</div>
+    <div class="card">
+      ${mine.length ? mine.map(row).join('') : `<div class="tiny" style="text-align:center;padding:8px">No classes yet — add them under Classes.</div>`}
+    </div>`;
+}
 function renderHome(c){
   const hour = new Date().getHours();
   const hi = hour<12 ? 'Good morning' : hour<17 ? 'Good afternoon' : 'Good evening';
@@ -888,7 +933,8 @@ function renderHome(c){
       <div class="lead">${new Date().toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'})}</div></div>
       ${adminButtonHtml()}
     </div>`;
-  c.innerHTML = head + scheduleNudgeHtml() + checkinPromptHtml() + ratePromptHtml() + (S.mode==='tutor' && S.me.isTutor ? tutorDashboard() : studentDashboard());
+  // The week's calendar comes first on both the student and tutor home.
+  c.innerHTML = head + weekHeadHtml() + weekStrip() + (S.mode==='tutor' && S.me.isTutor ? '' : yourClassesHtml()) + scheduleNudgeHtml() + checkinPromptHtml() + ratePromptHtml() + (S.mode==='tutor' && S.me.isTutor ? tutorDashboard() : studentDashboard());
 }
 
 // The administrator's home: what is waiting, where the gaps are, who is
@@ -1038,39 +1084,16 @@ const STATUS_WORD = { pending:'Waiting for tutor', offered:'Tutor offered to hel
 // ---- the student view: next session, requests, classes, community, one big button ----
 function studentDashboard(){
   const today=ymd(new Date());
-  const next = sessionsList().filter(x=>x.role==='student' && x.date && x.date>=today).sort((a,b)=>a.date.localeCompare(b.date)||(a.time||'').localeCompare(b.time||''))[0];
   const reqs = S.myRequests.filter(r=>['pending','offered','accepted','declined'].includes(r.status)).slice(0,5);
   const mine = ALL_COURSES.filter(x=>S.myClasses.includes(x));
   const feed = (S.posts||[]).filter(p=>!p.parent_id && mine.includes(p.course)).sort((a,b)=>b.created_at.localeCompare(a.created_at)).slice(0,4);
   return `
-    <div class="hero" style="margin-top:4px">
-      <div class="k">Next tutoring session</div>
-      ${next ? `<div class="big">${esc(next.course)} · ${esc(dayWord(next.date))} at ${esc(next.time)}</div>
-        <div class="sub">with ${esc(next.with)} · ${esc(next.format)}${next.location?' · 📍 '+esc(next.location):''}</div>`
-      : `<div class="big" style="font-size:16px">Nothing booked yet</div><div class="sub">Open a class to find a tutor, or post what you're stuck on below.</div>`}
-    </div>
-
     <div class="sectlabel">Need help with something?</div>
     <div class="search" onclick="openView({type:'search'})" style="cursor:pointer"><span class="mag">🔍</span><input placeholder="Search your classes…" readonly style="cursor:pointer"></div>
     ${helpNowHtml()}
 
-    <div class="sectlabel">Your classes</div>
-    <div class="card">
-      ${mine.length ? mine.map(cs=>{
-        const r = S.myRequests.filter(x=>x.course===cs && ['pending','offered','accepted'].includes(x.status)).sort((a,b)=>(a.date||'9999').localeCompare(b.date||'9999'))[0];
-        const n = newPostCount(cs);
-        const right = r
-          ? `<span style="${r.status==='accepted'?'color:#2e9b6a':'color:#c98b34'}">${r.status==='accepted' ? 'Session '+esc(dayWord(r.date))+' ✓' : STATUS_WORD[r.status]}</span>`
-          : (n ? n+' new post'+(n===1?'':'s') : tutorsFor(cs).length+' tutor'+(tutorsFor(cs).length===1?'':'s'));
-        return classRow(cs, right);
-      }).join('') : `<div class="tiny" style="text-align:center;padding:8px">No classes yet — add them under Classes.</div>`}
-    </div>
-
     <div class="sectlabel">Community</div>
     <div class="card">${feed.length ? feed.map(postRow).join('') : `<div class="tiny" style="text-align:center;padding:8px">Nothing new in your classes this week.</div>`}</div>
-
-    <div class="sectlabel">This week</div>
-    ${weekStrip()}
 
     <button class="btn bigbtn" onclick="go('classes')">Find a Tutor</button>`;
 }
@@ -1143,10 +1166,7 @@ function tutorDashboard(){
         <div class="sectlabel">Questions needing answers</div>
         <div class="card">${unanswered.length ? unanswered.map(postRow).join('') : `<div class="tiny" style="text-align:center;padding:8px">All caught up in your classes.</div>`}</div>
       </div>
-    </div>
-
-    <div class="sectlabel">This week</div>
-    ${weekStrip()}`;
+    </div>`;
 }
 // When I'm actually free on a day, between 7 AM and 8 PM: inside any
 // "available" windows I set, minus busy times and class periods.
@@ -1273,6 +1293,14 @@ function sessionColumn(role){
   }).join('') + (role==='tutor' && done ? `<div class="tiny" style="text-align:center;margin-top:8px">${done} session${done===1?'':'s'} completed · ${hoursLink(`<u>${hoursLabel(S.hours)} service hours</u>`)}</div>` : '');
 }
 
+// One class on the Profile: grade, name, and a small mark for its check.
+const STATUS_MARK = { verified:['ok','✓','Verified'], pending:['wait','⏳','Awaiting check'], rejected:['no','✕','Not verified'] };
+function classChip(course, grade, status, year){
+  const m=STATUS_MARK[status];
+  const tip=[grade ? 'Grade '+grade : 'No grade entered', m && m[2], year].filter(Boolean).join(' · ');
+  return `<span class="cchip" title="${esc(tip)}">${grade ? `<span class="grade ${gradeClass(grade)}">${esc(grade)}</span>` : '<span class="grade none">–</span>'}${esc(course)}${m ? `<span class="st ${m[0]}">${m[1]}</span>` : ''}</span>`;
+}
+const chipKey = '<div class="tiny" style="margin-top:10px">✓ verified · ⏳ awaiting an administrator\'s check against school records</div>';
 // The tutor home's "Classes you tutor" box. Subjects first; hovering one shows
 // an arrow, and clicking it opens that subject's classes right under it, in
 // the same box. Clicking a class goes to the class itself.
@@ -1410,7 +1438,8 @@ function renderClasses(c){
       <div class="lead">Pick a subject. Open a class for its tutors, the students taking it, materials and its board.</div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0 16px">${DEPTS.map(deptBtn).join('')}</div>
       ${dept ? `<div class="sectlabel">${dept.emoji} ${esc(dept.name)} · ${dept.courses.length} class${dept.courses.length===1?'':'es'}</div>${dept.courses.map(classRow).join('')}`
-             : `<div class="sectlabel">Where do students need help?</div><div class="card" style="padding:6px 14px">${needHeatHtml()}</div>`}`;
+             : `<div class="card row" style="cursor:pointer" onclick="go('admin-need')"><div class="avatar" style="background:var(--pink-d)">📊</div>
+                 <div style="flex:1"><div style="font-weight:800">Tutor need</div><div class="tiny">Where students need help and there are too few tutors</div></div><div style="color:var(--muted)">›</div></div>`}`;
     return;
   }
   if(S.mode==='tutor'){
@@ -2597,6 +2626,18 @@ async function loadChat(id){
   }
   if(S.overlay && S.overlay.type==='chat' && S.overlay.id===id) drawChat();
 }
+// Chats are moderated: the board and administrators can read them. Said once
+// at the top of a chat until the person hides it; "Don't show again" sticks.
+const MOD_OFF='sc-mod-notice-off';
+function modNoticeHtml(){
+  let off=false; try { off=localStorage.getItem(MOD_OFF)==='1'; } catch {}
+  if(off || S.modSeen) return '';
+  return `<div class="card" style="border-color:#f3dcb4;background:#fffaf1;margin-bottom:10px">
+    <div style="font-weight:800">🛡️ Messages are moderated</div>
+    <div class="tiny" style="margin:2px 0 8px">The board and administrators can read chats to keep everyone safe. Keep it to scheduling and schoolwork.</div>
+    <div class="row" style="gap:8px"><button class="btn sm" onclick="S.modSeen=true;render()">Got it</button>
+      <button class="btn ghost sm" onclick="try{localStorage.setItem(MOD_OFF,'1')}catch{};render()">Don't show again</button></div></div>`;
+}
 function renderChat(c){
   const r=findReq(S.overlay.id); if(!r){ closeView(); return; }
   const o=otherSide(r);
@@ -2604,6 +2645,7 @@ function renderChat(c){
     <button class="back" onclick="closeView()">‹ Back</button>
     <div class="row" style="margin-bottom:10px">${avatarDot(initials(o.alias), S.presence && S.presence[r.id], 'background:'+courseColor(r.course))}
       <div><h2 class="title" style="margin:0">${esc(o.alias)}</h2><div class="tiny">${esc(r.course)} · ${esc(fmtDate(r.date))} ${esc(r.time||'')}</div></div></div>
+    ${modNoticeHtml()}
     ${sessionPlanHtml(r)}
     <div class="chatwrap" style="height:calc(100vh - 420px)"><div class="card chatcard"><div class="chat" id="chatbox"><div class="tiny" style="text-align:center;padding:10px">Loading…</div></div></div>
     ${inQuietHours() ? quietNote() : `<div class="composer">
@@ -3179,13 +3221,25 @@ function deletePost(id){
 
 /* -------- PROFILE -------- */
 // The line students see on your tutor card, editable from Profile.
+// "About you": every account has one. Tutors' shows on their tutor card;
+// everyone's shows on their page in Members for the board and administrators.
+function bioCardHtml(){
+  const tutor = !!(S.me && S.me.isTutor && A.profile.tutor_alias);
+  return `<div class="sectlabel">About you</div>
+      <div class="card">
+        <textarea id="bio_in" rows="2" maxlength="140" style="width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid #e5e2f0;border-radius:10px;font:inherit;font-size:14px;resize:vertical"
+          placeholder="${tutor ? "e.g. Math clicked for me late, so I get where it's confusing." : isStaff() ? 'e.g. Board secretary. Ask me about service hours.' : "e.g. Junior, on the swim team, working on chemistry."}" oninput="S.bioDraft=this.value">${esc(S.bioDraft ?? (A.profile.tutor_bio||''))}</textarea>
+        <div class="row" style="margin-top:8px"><div class="tiny">${tutor ? 'Students see this on your tutor card when they look for help.' : 'Shows on your account.'} Up to 140 characters.</div>
+          <button class="btn sm" id="bio_save" style="margin-left:auto" onclick="saveBio()">Save</button></div>
+      </div>`;
+}
 async function saveBio(){
   const bio=(($('bio_in')||{}).value ?? S.bioDraft ?? '').trim().slice(0,140);
   const btn=$('bio_save'); if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
   try{
     await sbFetch('/rest/v1/sl_profiles?id=eq.'+A.user.id, { method:'PATCH', headers:{ Prefer:'return=minimal' }, body:JSON.stringify({ tutor_bio:bio }) });
     A.profile.tutor_bio=bio; S.bioDraft=null;
-    toast(bio ? 'Saved — students will see it on your card' : 'Removed'); render();
+    toast(bio ? 'Saved' : 'Removed'); render();
   }catch(e){ toast(e.message); if(btn){ btn.disabled=false; btn.textContent='Save'; } }
 }
 function renderProfile(c){
@@ -3199,7 +3253,8 @@ function renderProfile(c){
           <div class="tiny">Administrator · ${esc((A.user&&A.user.email)||'')}</div></div></div>
       </div>
       <div class="sectlabel">What you do here</div>
-      <div class="card tiny">Check students' grades so they can tutor, keep an eye on requests, and manage who has a seat. Administrators don't tutor or take tutoring, so there's no survey and no classes to pick.</div>`;
+      <div class="card tiny">Check students' grades so they can tutor, keep an eye on requests, and manage who has a seat. Administrators don't tutor or take tutoring, so there's no survey and no classes to pick.</div>
+      ${bioCardHtml()}`;
     return;
   }
   c.innerHTML=`
@@ -3210,6 +3265,7 @@ function renderProfile(c){
         <div class="tiny">${A.profile.tutor_alias ? 'Tutoring as '+esc(A.profile.tutor_alias)+' · ' : ''}${hasGrade() ? (me.isTutor?'Tutor + Student':'Student')+' · Grade '+me.grade : (A.profile.role==='board'?'Board':'Administrator')} ${roleBadge(A.profile.role)}</div></div>
         ${adminButtonHtml()}</div>
     </div>
+    ${bioCardHtml()}
 
     ${me.isTutor ? `
       <div class="sectlabel">Community service <button class="btn ghost sm" style="margin-left:8px;padding:4px 10px" onclick="go('tutoring')">Manage sessions</button></div>
@@ -3220,19 +3276,10 @@ function renderProfile(c){
       </div>
       <div class="sectlabel">Classes you tutor</div>
       <div class="card">
-        ${me.tutorCourses.length ? me.tutorCourses.map(tc=>`<div class="row" style="margin-bottom:6px">${tc.grade?`<span class="grade ${gradeClass(tc.grade)}">${esc(tc.grade)}</span>`:''}
-          <span style="font-weight:700;font-size:14px">${esc(tc.course)}</span>${tc.verify==='verified' ? '<span class="verified">✓ Verified</span>' : tc.verify==='pending' ? '<span class="unverified">Awaiting check</span>' : tc.verify==='rejected' ? '<span class="unverified">Not verified</span>' : ''}<span class="tiny" style="margin-left:auto">${esc(tc.year||'')}</span></div>`).join('') : `<div class="tiny">No classes added yet.</div>`}
-        <div class="tiny" style="margin-top:8px">An administrator checks each grade against school records before it shows as verified.</div>
-        <button class="btn ghost sm" style="width:100%;margin-top:10px" onclick="openView({type:'becomeTutor'})">Edit tutoring classes</button>
+        ${me.tutorCourses.length ? `<div class="cchips">${me.tutorCourses.map(tc=>classChip(tc.course, tc.grade, tc.verify, tc.year)).join('')}</div>${chipKey}` : `<div class="tiny">No classes added yet.</div>`}
+        <button class="btn ghost sm" style="margin-top:10px" onclick="openView({type:'becomeTutor'})">Edit tutoring classes</button>
       </div>
       <div class="tiny" style="margin:12px 2px">🗓️ Available: ${esc(me.avail||'not set')}</div>
-      <div class="sectlabel">About you</div>
-      <div class="card">
-        <textarea id="bio_in" rows="2" maxlength="140" style="width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid #e5e2f0;border-radius:10px;font:inherit;font-size:14px;resize:vertical"
-          placeholder="e.g. Math clicked for me late, so I get where it's confusing." oninput="S.bioDraft=this.value">${esc(S.bioDraft ?? (A.profile.tutor_bio||''))}</textarea>
-        <div class="row" style="margin-top:8px"><div class="tiny">Students see this on your tutor card when they look for help. Up to 140 characters.</div>
-          <button class="btn sm" id="bio_save" style="margin-left:auto" onclick="saveBio()">Save</button></div>
-      </div>
     ` : `
       <div class="card" style="text-align:center;margin-top:12px">
         <div style="font-size:36px">✋</div>
@@ -3244,9 +3291,8 @@ function renderProfile(c){
 
     <div class="sectlabel">Classes I've taken ${S.editTaken ? '' : `<button class="btn ghost sm" style="margin-left:8px;padding:4px 10px" onclick="startEditTaken()">Edit</button>`}</div>
     ${S.editTaken ? takenEditorHtml() : `<div class="card">
-      ${(S.taken||[]).length ? (S.taken||[]).slice().sort((a,b)=>a.course.localeCompare(b.course)).map(g=>`<div class="row" style="margin-bottom:6px"><span class="grade ${gradeClass(g.grade)}">${esc(g.grade)}</span>
-        <span style="font-weight:700;font-size:14px">${esc(g.course)}</span>${g.status==='verified' ? '<span class="verified">✓ Verified</span>' : g.status==='rejected' ? '<span class="unverified">Not verified</span>' : '<span class="unverified">Awaiting check</span>'}<span class="tiny" style="margin-left:auto">${esc(g.year||'')}</span></div>`).join('') : `<div class="tiny">None entered yet. These are the classes you can tutor.</div>`}
-      <div class="tiny" style="margin-top:8px">An administrator checks each grade against school records. Only classes here can be tutored.</div>
+      ${(S.taken||[]).length ? `<div class="cchips">${(S.taken||[]).slice().sort((a,b)=>a.course.localeCompare(b.course)).map(g=>classChip(g.course, g.grade, g.status==='verified'||g.status==='rejected' ? g.status : 'pending', g.year)).join('')}</div>${chipKey}` : `<div class="tiny">None entered yet. These are the classes you can tutor.</div>`}
+      <div class="tiny" style="margin-top:4px">Only classes here can be tutored.</div>
     </div>`}
 
     ${hasSchedule() ? `<div class="sectlabel">Class schedule <button class="btn ghost sm" style="margin-left:8px;padding:4px 10px" onclick="S.schedDraft=null; openView({type:'classSchedule'})">Edit</button></div>
@@ -3591,17 +3637,29 @@ function renderAdminHub(c){
     ${tile('admin-requests','📋','All requests','Every tutoring request in the school')}
     ${tile('admin-team','🛡️','Members','Approve people, join codes, levels')}
     ${tile('admin-times','🕒','Session times','When tutoring can happen, and where')}
-    <div class="sectlabel">Where do students need help?</div>
+    ${tile('admin-need','📊','Tutor need','Where students need help and there are too few tutors', needGapCount())}`;
+}
+// High-need classes: the badge on the Tutor need button.
+const needGapCount = () => needRows().filter(r=>r.gap==='high').length;
+function renderTutorNeed(c){
+  if(!isStaff()) return go('home');
+  c.innerHTML = `
+    <button class="back" onclick="go(isAdmin()?'home':'admin')">‹ ${isAdmin() ? 'Home' : A.profile.role==='board' ? 'Board' : 'Administration'}</button>
+    <h2 class="title">Tutor need</h2>
+    <div class="lead">Students taking each class against the tutors for it. The biggest gaps come first.</div>
     <div class="card" style="padding:6px 14px">${needHeatHtml()}</div>`;
 }
 // Students taking each class versus tutors for it. The gap is the story.
-function needHeatHtml(){
-  const rows = ALL_COURSES.map(cs=>{
+function needRows(){
+  return ALL_COURSES.map(cs=>{
     const students=(S.roster||[]).filter(r=>r.course===cs).length + (S.myClasses.includes(cs)?1:0);
     const tutors=tutorsFor(cs).length + (S.tutorClasses.includes(cs)?1:0);
     const gap = students===0 ? 'none' : tutors===0 ? 'high' : students/tutors>4 ? 'high' : students/tutors>2 ? 'some' : 'ok';
     return { cs, students, tutors, gap };
   }).filter(r=>r.students||r.tutors).sort((a,b)=>({high:0,some:1,ok:2,none:3}[a.gap]-{high:0,some:1,ok:2,none:3}[b.gap]) || (b.students-a.students));
+}
+function needHeatHtml(){
+  const rows = needRows();
   if(!rows.length) return '<div class="tiny" style="text-align:center;padding:8px">No classes added yet.</div>';
   const tag = g => g==='high' ? '<span class="pill" style="background:#fdecef;color:#c23b5e">High need</span>' : g==='some' ? '<span class="pill" style="background:#fbf1e2;color:#c98b34">Thin</span>' : g==='ok' ? '<span class="pill" style="background:#e4f6ec;color:#2e9b6a">Covered</span>' : '<span class="pill">No students</span>';
   return `<div class="listrow" style="cursor:default;font-size:11px;color:var(--muted);font-weight:800;text-transform:uppercase;letter-spacing:.5px"><span class="t">Class</span><span class="r" style="width:70px;text-align:right">Students</span><span class="r" style="width:60px;text-align:right">Tutors</span><span class="r" style="width:90px;text-align:right">Gap</span></div>` +
@@ -3736,6 +3794,7 @@ function renderMemberDetail(c){
         <div style="flex:1;min-width:0"><div style="font-weight:800;font-size:17px">${esc(s.real_name||s.email)} ${roleBadge(s.role)}</div>
           <div class="tiny">${esc(s.email)}${s.grade_level?' · Grade '+s.grade_level:''}${alias?' · known as '+esc(alias.student_alias)+(tutoring?' / '+esc(tutoring.name):''):''}</div>
           <div class="tiny">${s.joined ? 'Signed up '+esc(new Date(s.joined).toLocaleDateString())+' · '+esc(seenLabel(s.seen)) : 'Not signed up yet · join code <b>'+esc(s.join_code||'—')+'</b>'}</div></div></div>
+      ${s.bio ? `<div style="margin-top:10px;font-size:14px">“${esc(s.bio)}”</div>` : ''}
     </div>
     ${s.role==='student' ? `
     <div class="sectlabel">As a tutor</div>
@@ -3845,7 +3904,7 @@ async function renderAdminTeam(c){
   try {
     [list, people] = await Promise.all([
       sbFetch('/rest/v1/sl_staff?select=*&order=role,added_at.desc'),
-      sbFetch('/rest/v1/sl_profiles?select=id,real_name,student_alias,tutor_alias,role,created_at,last_seen_at'),
+      sbFetch('/rest/v1/sl_profiles?select=id,real_name,student_alias,tutor_alias,tutor_bio,role,created_at,last_seen_at'),
     ]);
   } catch(e){ c.innerHTML = '<h2 class="title">Members</h2><div class="auth-msg err">' + esc(e.message) + '</div>'; return; }
   if(S.tab!=='admin-team') return;
@@ -3882,7 +3941,7 @@ async function renderAdminTeam(c){
       </div>` : ''}
     </div>`;
   };
-  list.forEach(s => { const p = s.user_id ? signedUp[s.user_id] : null; s.joined = p ? p.created_at : null; s.seen = p ? p.last_seen_at : null; s.tutors = !!(p && p.tutor_alias); });
+  list.forEach(s => { const p = s.user_id ? signedUp[s.user_id] : null; s.joined = p ? p.created_at : null; s.seen = p ? p.last_seen_at : null; s.tutors = !!(p && p.tutor_alias); s.bio = p ? p.tutor_bio : ''; });
   const online = list.filter(s => isOnline(s.seen)).length;
   // Students: hundreds of them, so they are grouped by grade and folded, with
   // chips to narrow the list and a search that opens every group.
